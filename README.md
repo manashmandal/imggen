@@ -1,6 +1,10 @@
-# imggen
+<p align="center">
+  <img src="logo.png" alt="imggen logo" width="150">
+</p>
 
-CLI tool for generating images using AI image generation APIs.
+<h1 align="center">imggen</h1>
+
+<p align="center">CLI tool for generating images using AI image generation APIs.</p>
 
 ## Installation
 
