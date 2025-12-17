@@ -70,3 +70,15 @@ release:
     name: imggen
   draft: false
   prerelease: auto
+  mode: replace
+  make_latest: true
+  header: |
+    ## Installation
+
+    ```bash
+    brew tap manashmandal/tap && brew install imggen
+    ```
+
+    Or download a binary below.
+  footer: |
+    **Full Changelog**: https://github.com/manashmandal/imggen/compare/{{ .PreviousTag }}...{{ .Tag }}
