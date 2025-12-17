@@ -37,13 +37,13 @@ checksum:
   name_template: "checksums.txt"
 
 changelog:
+  use: github
   sort: asc
   filters:
     exclude:
       - "^docs:"
       - "^test:"
       - "^chore:"
-      - "Merge pull request"
 
 brews:
   - name: imggen
