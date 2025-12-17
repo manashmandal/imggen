@@ -8,9 +8,22 @@
 
 ## Installation
 
+### Homebrew (macOS/Linux)
+
+```bash
+brew tap manashmandal/tap
+brew install imggen
+```
+
+### Go Install
+
 ```bash
 go install github.com/manashmandal/imggen/cmd/imggen@latest
 ```
+
+### Download Binary
+
+Download pre-built binaries from the [Releases](https://github.com/manashmandal/imggen/releases) page.
 
 ## Usage
 
