@@ -52,3 +52,11 @@ func (p *Provider) ListModels() []string {
 func (p *Provider) Generate(_ context.Context, _ *models.Request) (*models.Response, error) {
 	return nil, ErrNotImplemented
 }
+
+func (p *Provider) Edit(_ context.Context, _ *models.EditRequest) (*models.Response, error) {
+	return nil, ErrNotImplemented
+}
+
+func (p *Provider) SupportsEdit(_ string) bool {
+	return false
+}

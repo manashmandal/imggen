@@ -10,9 +10,9 @@ import (
 
 // mockProvider is a test implementation of Provider.
 type mockProvider struct {
-	name           models.ProviderType
+	name            models.ProviderType
 	supportedModels []string
-	generateFunc   func(ctx context.Context, req *models.Request) (*models.Response, error)
+	generateFunc    func(ctx context.Context, req *models.Request) (*models.Response, error)
 }
 
 func (m *mockProvider) Name() models.ProviderType {
@@ -26,12 +26,20 @@ func (m *mockProvider) Generate(ctx context.Context, req *models.Request) (*mode
 	return &models.Response{}, nil
 }
 
+func (m *mockProvider) Edit(_ context.Context, _ *models.EditRequest) (*models.Response, error) {
+	return nil, ErrEditNotSupported
+}
+
 func (m *mockProvider) SupportsModel(model string) bool {
 	for _, m := range m.supportedModels {
 		if m == model {
 			return true
 		}
 	}
+	return false
+}
+
+func (m *mockProvider) SupportsEdit(_ string) bool {
 	return false
 }
 

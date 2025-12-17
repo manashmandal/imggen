@@ -13,12 +13,16 @@ var (
 	ErrModelNotSupported = errors.New("model not supported by provider")
 	ErrAPIKeyRequired    = errors.New("API key is required")
 	ErrGenerationFailed  = errors.New("image generation failed")
+	ErrEditFailed        = errors.New("image edit failed")
+	ErrEditNotSupported  = errors.New("image editing not supported by model")
 )
 
 type Provider interface {
 	Name() models.ProviderType
 	Generate(ctx context.Context, req *models.Request) (*models.Response, error)
+	Edit(ctx context.Context, req *models.EditRequest) (*models.Response, error)
 	SupportsModel(model string) bool
+	SupportsEdit(model string) bool
 	ListModels() []string
 }
 
