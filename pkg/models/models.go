@@ -7,14 +7,16 @@ import (
 )
 
 var (
-	ErrEmptyPrompt              = errors.New("prompt cannot be empty")
-	ErrInvalidCount             = errors.New("count must be at least 1")
-	ErrCountExceedsMax          = errors.New("count exceeds maximum for model")
-	ErrInvalidSize              = errors.New("invalid size for model")
-	ErrInvalidQuality           = errors.New("invalid quality for model")
-	ErrStyleNotSupported        = errors.New("style not supported by model")
-	ErrTransparencyNotSupported = errors.New("transparency not supported by model")
+	ErrEmptyPrompt               = errors.New("prompt cannot be empty")
+	ErrInvalidCount              = errors.New("count must be at least 1")
+	ErrCountExceedsMax           = errors.New("count exceeds maximum for model")
+	ErrInvalidSize               = errors.New("invalid size for model")
+	ErrInvalidQuality            = errors.New("invalid quality for model")
+	ErrStyleNotSupported         = errors.New("style not supported by model")
+	ErrTransparencyNotSupported  = errors.New("transparency not supported by model")
 	ErrInvalidTransparencyFormat = errors.New("transparent background requires png or webp format")
+	ErrEditNotSupported          = errors.New("image editing not supported by model")
+	ErrNoImageData               = errors.New("image data is required for editing")
 )
 
 type ProviderType string
@@ -63,6 +65,35 @@ func NewRequest(prompt string) *Request {
 	}
 }
 
+type EditRequest struct {
+	Image  []byte
+	Mask   []byte
+	Prompt string
+	Model  string
+	Size   string
+	Count  int
+	Format OutputFormat
+}
+
+func NewEditRequest(image []byte, prompt string) *EditRequest {
+	return &EditRequest{
+		Image:  image,
+		Prompt: prompt,
+		Count:  1,
+		Format: FormatPNG,
+	}
+}
+
+func (r *EditRequest) Validate() error {
+	if len(r.Image) == 0 {
+		return ErrNoImageData
+	}
+	if r.Prompt == "" {
+		return ErrEmptyPrompt
+	}
+	return nil
+}
+
 type Response struct {
 	Images        []GeneratedImage
 	RevisedPrompt string
@@ -86,6 +117,7 @@ type ModelCapabilities struct {
 	DefaultQuality       string
 	SupportsStyle        bool
 	SupportsTransparency bool
+	SupportsEdit         bool
 	StyleOptions         []string
 }
 
@@ -191,6 +223,7 @@ func DefaultRegistry() *ModelRegistry {
 		DefaultQuality:       "auto",
 		SupportsStyle:        false,
 		SupportsTransparency: true,
+		SupportsEdit:         true,
 	})
 
 	r.Register(&ModelCapabilities{
@@ -203,6 +236,7 @@ func DefaultRegistry() *ModelRegistry {
 		DefaultQuality:       "standard",
 		SupportsStyle:        true,
 		SupportsTransparency: false,
+		SupportsEdit:         false,
 		StyleOptions:         []string{"vivid", "natural"},
 	})
 
@@ -216,6 +250,7 @@ func DefaultRegistry() *ModelRegistry {
 		DefaultQuality:       "",
 		SupportsStyle:        false,
 		SupportsTransparency: false,
+		SupportsEdit:         true,
 	})
 
 	r.Register(&ModelCapabilities{

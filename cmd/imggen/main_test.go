@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/manash/imggen/internal/display"
 	"github.com/manash/imggen/internal/image"
 	"github.com/manash/imggen/internal/provider"
 	"github.com/manash/imggen/pkg/models"
@@ -36,8 +37,16 @@ func (m *mockProvider) Generate(ctx context.Context, req *models.Request) (*mode
 	}, nil
 }
 
-func (m *mockProvider) SupportsModel(model string) bool {
+func (m *mockProvider) Edit(_ context.Context, _ *models.EditRequest) (*models.Response, error) {
+	return nil, provider.ErrEditNotSupported
+}
+
+func (m *mockProvider) SupportsModel(_ string) bool {
 	return true
+}
+
+func (m *mockProvider) SupportsEdit(_ string) bool {
+	return false
 }
 
 func (m *mockProvider) ListModels() []string {
@@ -55,6 +64,8 @@ func resetFlags() {
 	flagStyle = ""
 	flagTransparent = false
 	flagAPIKey = ""
+	flagShow = false
+	flagInteractive = false
 }
 
 // newTestApp creates an App configured for testing.
@@ -69,7 +80,8 @@ func newTestApp(out *bytes.Buffer) *App {
 		NewProvider: func(cfg *provider.Config, registry *models.ModelRegistry) (provider.Provider, error) {
 			return &mockProvider{}, nil
 		},
-		NewSaver: image.NewSaver,
+		NewSaver:     image.NewSaver,
+		NewDisplayer: display.New,
 	}
 }
 
@@ -94,6 +106,9 @@ func TestDefaultApp(t *testing.T) {
 	if app.NewSaver == nil {
 		t.Error("DefaultApp() NewSaver is nil")
 	}
+	if app.NewDisplayer == nil {
+		t.Error("DefaultApp() NewDisplayer is nil")
+	}
 
 	// Test GetEnv works
 	os.Setenv("TEST_VAR_123", "test_value")
@@ -113,7 +128,7 @@ func TestNewRootCmd(t *testing.T) {
 	}
 
 	// Check flags exist
-	flags := []string{"model", "size", "quality", "count", "output", "format", "style", "transparent", "api-key"}
+	flags := []string{"model", "size", "quality", "count", "output", "format", "style", "transparent", "api-key", "show"}
 	for _, name := range flags {
 		if cmd.Flags().Lookup(name) == nil {
 			t.Errorf("flag --%s not found", name)
@@ -129,6 +144,7 @@ func TestNewRootCmd(t *testing.T) {
 		"o": "output",
 		"f": "format",
 		"t": "transparent",
+		"S": "show",
 	}
 	for short, long := range shortFlags {
 		flag := cmd.Flags().ShorthandLookup(short)
@@ -609,6 +625,7 @@ func TestRootCmd_FlagDefaults(t *testing.T) {
 		{"style", ""},
 		{"transparent", "false"},
 		{"api-key", ""},
+		{"show", "false"},
 	}
 
 	for _, tt := range tests {
@@ -748,5 +765,106 @@ func TestApp_DefaultNewSaver(t *testing.T) {
 	saver := app.NewSaver()
 	if saver == nil {
 		t.Error("NewSaver() returned nil")
+	}
+}
+
+func TestApp_DefaultNewDisplayer(t *testing.T) {
+	app := DefaultApp()
+	var buf bytes.Buffer
+	displayer := app.NewDisplayer(&buf)
+	if displayer == nil {
+		t.Error("NewDisplayer() returned nil")
+	}
+}
+
+func TestRunGenerate_WithShowFlag(t *testing.T) {
+	resetFlags()
+	out := &bytes.Buffer{}
+	app := newTestApp(out)
+	flagAPIKey = "test-key"
+	flagShow = true
+
+	tmpDir := t.TempDir()
+	oldWd, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(oldWd)
+
+	cmd := &cobra.Command{}
+	err := runGenerate(cmd, []string{"test prompt"}, app)
+
+	if err != nil {
+		t.Errorf("runGenerate() error = %v, want nil", err)
+	}
+
+	output := out.String()
+	if !strings.Contains(output, "Saved:") {
+		t.Error("output missing 'Saved:' message")
+	}
+	if !strings.Contains(output, "\x1b_G") {
+		t.Error("output missing Kitty graphics escape sequence")
+	}
+}
+
+func TestRunGenerate_ShowFlagDisplaysMultipleImages(t *testing.T) {
+	resetFlags()
+	out := &bytes.Buffer{}
+	app := newTestApp(out)
+	app.NewProvider = func(cfg *provider.Config, registry *models.ModelRegistry) (provider.Provider, error) {
+		return &mockProvider{
+			generateFunc: func(ctx context.Context, req *models.Request) (*models.Response, error) {
+				return &models.Response{
+					Images: []models.GeneratedImage{
+						{Data: []byte("img1"), Index: 0},
+						{Data: []byte("img2"), Index: 1},
+					},
+				}, nil
+			},
+		}, nil
+	}
+	flagAPIKey = "test-key"
+	flagShow = true
+	flagCount = 2
+
+	tmpDir := t.TempDir()
+	oldWd, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(oldWd)
+
+	cmd := &cobra.Command{}
+	err := runGenerate(cmd, []string{"test prompt"}, app)
+
+	if err != nil {
+		t.Errorf("runGenerate() error = %v, want nil", err)
+	}
+
+	output := out.String()
+	escCount := strings.Count(output, "\x1b_G")
+	if escCount != 2 {
+		t.Errorf("expected 2 Kitty escape sequences, got %d", escCount)
+	}
+}
+
+func TestRunGenerate_WithoutShowFlag(t *testing.T) {
+	resetFlags()
+	out := &bytes.Buffer{}
+	app := newTestApp(out)
+	flagAPIKey = "test-key"
+	flagShow = false
+
+	tmpDir := t.TempDir()
+	oldWd, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(oldWd)
+
+	cmd := &cobra.Command{}
+	err := runGenerate(cmd, []string{"test prompt"}, app)
+
+	if err != nil {
+		t.Errorf("runGenerate() error = %v, want nil", err)
+	}
+
+	output := out.String()
+	if strings.Contains(output, "\x1b_G") {
+		t.Error("output should not contain Kitty escape sequence when --show is false")
 	}
 }
