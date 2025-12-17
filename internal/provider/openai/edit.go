@@ -8,6 +8,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"net/textproto"
 
 	"github.com/manash/imggen/internal/provider"
 	"github.com/manash/imggen/pkg/models"
@@ -33,7 +34,7 @@ func (p *Provider) Edit(ctx context.Context, req *models.EditRequest) (*models.R
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
 
-	imagePart, err := writer.CreateFormFile("image", "image.png")
+	imagePart, err := createFormFileWithContentType(writer, "image", "image.png", "image/png")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create image part: %w", err)
 	}
@@ -42,7 +43,7 @@ func (p *Provider) Edit(ctx context.Context, req *models.EditRequest) (*models.R
 	}
 
 	if len(req.Mask) > 0 {
-		maskPart, err := writer.CreateFormFile("mask", "mask.png")
+		maskPart, err := createFormFileWithContentType(writer, "mask", "mask.png", "image/png")
 		if err != nil {
 			return nil, fmt.Errorf("failed to create mask part: %w", err)
 		}
@@ -118,4 +119,11 @@ func (p *Provider) Edit(ctx context.Context, req *models.EditRequest) (*models.R
 	}
 
 	return p.buildResponse(apiResp)
+}
+
+func createFormFileWithContentType(w *multipart.Writer, fieldname, filename, contentType string) (io.Writer, error) {
+	h := make(textproto.MIMEHeader)
+	h.Set("Content-Disposition", fmt.Sprintf(`form-data; name="%s"; filename="%s"`, fieldname, filename))
+	h.Set("Content-Type", contentType)
+	return w.CreatePart(h)
 }
