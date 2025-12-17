@@ -49,7 +49,7 @@ brews:
   - name: imggen
     repository:
       owner: manashmandal
-      name: homebrew-tap
+      name: homebrew-imggen
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
     directory: Formula
     homepage: "https://github.com/manashmandal/imggen"
@@ -76,7 +76,7 @@ release:
     ## Installation
 
     ```bash
-    brew tap manashmandal/tap && brew install imggen
+    brew tap manashmandal/imggen && brew install imggen
     ```
 
     Or download a binary below.
