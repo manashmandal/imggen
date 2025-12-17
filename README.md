@@ -11,8 +11,7 @@
 ### Homebrew (macOS/Linux)
 
 ```bash
-brew tap manashmandal/tap
-brew install imggen
+brew install manashmandal/tap/imggen
 ```
 
 ### Go Install
