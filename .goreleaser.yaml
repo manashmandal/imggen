@@ -1,0 +1,84 @@
+version: 2
+
+project_name: imggen
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - main: ./cmd/imggen
+    binary: imggen
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.ShortCommit}}
+    ignore:
+      - goos: windows
+        goarch: arm64
+
+archives:
+  - format: tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      - goos: windows
+        format: zip
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  use: github
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+
+brews:
+  - name: imggen
+    repository:
+      owner: manashmandal
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    directory: Formula
+    homepage: "https://github.com/manashmandal/imggen"
+    description: "CLI tool for generating images using AI image generation APIs"
+    license: "MIT"
+    commit_author:
+      name: goreleaserbot
+      email: bot@goreleaser.com
+    skip_upload: auto
+    test: |
+      system "#{bin}/imggen", "--version"
+    install: |
+      bin.install "imggen"
+
+release:
+  github:
+    owner: manashmandal
+    name: imggen
+  draft: false
+  prerelease: auto
+  mode: replace
+  make_latest: true
+  header: |
+    ## Installation
+
+    ```bash
+    brew tap manashmandal/tap && brew install imggen
+    ```
+
+    Or download a binary below.
+  footer: |
+    **Full Changelog**: https://github.com/manashmandal/imggen/compare/{{ .PreviousTag }}...{{ .Tag }}
