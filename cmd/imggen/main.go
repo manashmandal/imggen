@@ -120,7 +120,107 @@ Examples:
 	cmd.Flags().BoolVarP(&flagInteractive, "interactive", "i", false, "start interactive editing mode")
 	cmd.Flags().BoolVarP(&flagVerbose, "verbose", "v", false, "log HTTP requests and responses (API keys redacted)")
 
+	cmd.AddCommand(newCostCmd(app))
+
 	return cmd
+}
+
+func newCostCmd(app *App) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "cost [today|week|month|total|provider]",
+		Short: "View cost tracking information",
+		Long: `View cost tracking information for image generation.
+
+Subcommands:
+  today     - Show today's costs
+  week      - Show this week's costs (last 7 days)
+  month     - Show this month's costs (last 30 days)
+  total     - Show all-time total costs (default)
+  provider  - Show costs broken down by provider
+
+Examples:
+  imggen cost           # show total costs
+  imggen cost today     # show today's costs
+  imggen cost provider  # show costs by provider`,
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runCost(app, args)
+		},
+	}
+	return cmd
+}
+
+func runCost(app *App, args []string) error {
+	ctx := context.Background()
+
+	store, err := session.NewStore()
+	if err != nil {
+		return fmt.Errorf("failed to open database: %w", err)
+	}
+	defer store.Close()
+
+	subcommand := "total"
+	if len(args) > 0 {
+		subcommand = args[0]
+	}
+
+	now := time.Now()
+
+	switch subcommand {
+	case "today":
+		start := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+		end := start.Add(24 * time.Hour)
+		summary, err := store.GetCostByDateRange(ctx, start, end)
+		if err != nil {
+			return fmt.Errorf("failed to get costs: %w", err)
+		}
+		fmt.Fprintf(app.Out, "Today's cost: $%.4f (%d image(s))\n", summary.TotalCost, summary.ImageCount)
+
+	case "week":
+		start := now.AddDate(0, 0, -7)
+		summary, err := store.GetCostByDateRange(ctx, start, now)
+		if err != nil {
+			return fmt.Errorf("failed to get costs: %w", err)
+		}
+		fmt.Fprintf(app.Out, "This week's cost: $%.4f (%d image(s))\n", summary.TotalCost, summary.ImageCount)
+
+	case "month":
+		start := now.AddDate(0, 0, -30)
+		summary, err := store.GetCostByDateRange(ctx, start, now)
+		if err != nil {
+			return fmt.Errorf("failed to get costs: %w", err)
+		}
+		fmt.Fprintf(app.Out, "This month's cost: $%.4f (%d image(s))\n", summary.TotalCost, summary.ImageCount)
+
+	case "total":
+		summary, err := store.GetTotalCost(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to get costs: %w", err)
+		}
+		fmt.Fprintf(app.Out, "Total cost: $%.4f (%d image(s))\n", summary.TotalCost, summary.ImageCount)
+
+	case "provider":
+		summaries, err := store.GetCostByProvider(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to get costs: %w", err)
+		}
+		fmt.Fprintf(app.Out, "%-12s %8s %10s\n", "Provider", "Images", "Cost")
+		fmt.Fprintln(app.Out, "--------------------------------")
+		var totalImages int
+		var totalCost float64
+		for _, s := range summaries {
+			fmt.Fprintf(app.Out, "%-12s %8d %10s\n", s.Provider, s.ImageCount, fmt.Sprintf("$%.4f", s.TotalCost))
+			totalImages += s.ImageCount
+			totalCost += s.TotalCost
+		}
+		fmt.Fprintln(app.Out, "--------------------------------")
+		fmt.Fprintf(app.Out, "%-12s %8d %10s\n", "Total", totalImages, fmt.Sprintf("$%.4f", totalCost))
+
+	default:
+		return fmt.Errorf("unknown subcommand %q: use today, week, month, total, or provider", subcommand)
+	}
+
+	return nil
 }
 
 func runGenerate(_ *cobra.Command, args []string, app *App) error {
