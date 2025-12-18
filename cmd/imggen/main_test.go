@@ -8,12 +8,14 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/manash/imggen/internal/display"
 	"github.com/manash/imggen/internal/image"
 	"github.com/manash/imggen/internal/provider"
+	"github.com/manash/imggen/internal/session"
 	"github.com/manash/imggen/pkg/models"
 )
 
@@ -66,6 +68,7 @@ func resetFlags() {
 	flagAPIKey = ""
 	flagShow = false
 	flagInteractive = false
+	flagDBBackup = false
 }
 
 // newTestApp creates an App configured for testing.
@@ -866,5 +869,501 @@ func TestRunGenerate_WithoutShowFlag(t *testing.T) {
 	output := out.String()
 	if strings.Contains(output, "\x1b_G") {
 		t.Error("output should not contain Kitty escape sequence when --show is false")
+	}
+}
+
+// Cost command tests
+
+func TestNewCostCmd(t *testing.T) {
+	out := &bytes.Buffer{}
+	app := newTestApp(out)
+	cmd := newCostCmd(app)
+
+	if cmd.Use != "cost [today|week|month|total|provider]" {
+		t.Errorf("Use = %s, want 'cost [today|week|month|total|provider]'", cmd.Use)
+	}
+	if cmd.Short == "" {
+		t.Error("Short description is empty")
+	}
+}
+
+func TestRunCost_Total(t *testing.T) {
+	resetFlags()
+	out := &bytes.Buffer{}
+	app := newTestApp(out)
+
+	// Create temp database
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+	store, err := session.NewStoreWithPath(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+
+	// Add some cost entries
+	ctx := context.Background()
+	store.LogCost(ctx, &session.CostEntry{
+		Provider:   "openai",
+		Model:      "gpt-image-1",
+		Cost:       0.042,
+		ImageCount: 1,
+		Timestamp:  time.Now(),
+	})
+	store.Close()
+
+	// Override getDBPath for testing
+	oldGetDBPath := getDBPath
+	getDBPath = func() (string, error) { return dbPath, nil }
+	defer func() { getDBPath = oldGetDBPath }()
+
+	err = runCost(app, []string{"total"})
+	if err != nil {
+		t.Errorf("runCost() error = %v", err)
+	}
+
+	output := out.String()
+	if !strings.Contains(output, "Total cost:") {
+		t.Error("output missing 'Total cost:'")
+	}
+	if !strings.Contains(output, "$0.0420") {
+		t.Error("output missing cost amount")
+	}
+}
+
+func TestRunCost_Today(t *testing.T) {
+	resetFlags()
+	out := &bytes.Buffer{}
+	app := newTestApp(out)
+
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+	store, err := session.NewStoreWithPath(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+
+	ctx := context.Background()
+	store.LogCost(ctx, &session.CostEntry{
+		Provider:   "openai",
+		Model:      "gpt-image-1",
+		Cost:       0.011,
+		ImageCount: 1,
+		Timestamp:  time.Now(),
+	})
+	store.Close()
+
+	oldGetDBPath := getDBPath
+	getDBPath = func() (string, error) { return dbPath, nil }
+	defer func() { getDBPath = oldGetDBPath }()
+
+	err = runCost(app, []string{"today"})
+	if err != nil {
+		t.Errorf("runCost() error = %v", err)
+	}
+
+	output := out.String()
+	if !strings.Contains(output, "Today's cost:") {
+		t.Error("output missing 'Today's cost:'")
+	}
+}
+
+func TestRunCost_Week(t *testing.T) {
+	resetFlags()
+	out := &bytes.Buffer{}
+	app := newTestApp(out)
+
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+	store, err := session.NewStoreWithPath(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	store.Close()
+
+	oldGetDBPath := getDBPath
+	getDBPath = func() (string, error) { return dbPath, nil }
+	defer func() { getDBPath = oldGetDBPath }()
+
+	err = runCost(app, []string{"week"})
+	if err != nil {
+		t.Errorf("runCost() error = %v", err)
+	}
+
+	output := out.String()
+	if !strings.Contains(output, "This week's cost:") {
+		t.Error("output missing 'This week's cost:'")
+	}
+}
+
+func TestRunCost_Month(t *testing.T) {
+	resetFlags()
+	out := &bytes.Buffer{}
+	app := newTestApp(out)
+
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+	store, err := session.NewStoreWithPath(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	store.Close()
+
+	oldGetDBPath := getDBPath
+	getDBPath = func() (string, error) { return dbPath, nil }
+	defer func() { getDBPath = oldGetDBPath }()
+
+	err = runCost(app, []string{"month"})
+	if err != nil {
+		t.Errorf("runCost() error = %v", err)
+	}
+
+	output := out.String()
+	if !strings.Contains(output, "This month's cost:") {
+		t.Error("output missing 'This month's cost:'")
+	}
+}
+
+func TestRunCost_Provider(t *testing.T) {
+	resetFlags()
+	out := &bytes.Buffer{}
+	app := newTestApp(out)
+
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+	store, err := session.NewStoreWithPath(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+
+	ctx := context.Background()
+	store.LogCost(ctx, &session.CostEntry{
+		Provider:   "openai",
+		Model:      "gpt-image-1",
+		Cost:       0.042,
+		ImageCount: 1,
+		Timestamp:  time.Now(),
+	})
+	store.Close()
+
+	oldGetDBPath := getDBPath
+	getDBPath = func() (string, error) { return dbPath, nil }
+	defer func() { getDBPath = oldGetDBPath }()
+
+	err = runCost(app, []string{"provider"})
+	if err != nil {
+		t.Errorf("runCost() error = %v", err)
+	}
+
+	output := out.String()
+	if !strings.Contains(output, "Provider") {
+		t.Error("output missing 'Provider' header")
+	}
+	if !strings.Contains(output, "openai") {
+		t.Error("output missing 'openai' provider")
+	}
+	if !strings.Contains(output, "Total") {
+		t.Error("output missing 'Total' row")
+	}
+}
+
+func TestRunCost_DefaultsToTotal(t *testing.T) {
+	resetFlags()
+	out := &bytes.Buffer{}
+	app := newTestApp(out)
+
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+	store, err := session.NewStoreWithPath(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	store.Close()
+
+	oldGetDBPath := getDBPath
+	getDBPath = func() (string, error) { return dbPath, nil }
+	defer func() { getDBPath = oldGetDBPath }()
+
+	err = runCost(app, []string{})
+	if err != nil {
+		t.Errorf("runCost() error = %v", err)
+	}
+
+	output := out.String()
+	if !strings.Contains(output, "Total cost:") {
+		t.Error("default should show total cost")
+	}
+}
+
+func TestRunCost_UnknownSubcommand(t *testing.T) {
+	resetFlags()
+	out := &bytes.Buffer{}
+	app := newTestApp(out)
+
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+	store, err := session.NewStoreWithPath(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	store.Close()
+
+	oldGetDBPath := getDBPath
+	getDBPath = func() (string, error) { return dbPath, nil }
+	defer func() { getDBPath = oldGetDBPath }()
+
+	err = runCost(app, []string{"unknown"})
+	if err == nil {
+		t.Error("runCost() error = nil, want error for unknown subcommand")
+	}
+	if !strings.Contains(err.Error(), "unknown subcommand") {
+		t.Errorf("error = %v, want 'unknown subcommand'", err)
+	}
+}
+
+// DB command tests
+
+func TestNewDBCmd(t *testing.T) {
+	out := &bytes.Buffer{}
+	app := newTestApp(out)
+	cmd := newDBCmd(app)
+
+	if cmd.Use != "db" {
+		t.Errorf("Use = %s, want 'db'", cmd.Use)
+	}
+
+	// Check subcommands exist
+	infoCmd, _, err := cmd.Find([]string{"info"})
+	if err != nil || infoCmd.Use != "info" {
+		t.Error("'info' subcommand not found")
+	}
+
+	resetCmd, _, err := cmd.Find([]string{"reset"})
+	if err != nil || resetCmd.Use != "reset" {
+		t.Error("'reset' subcommand not found")
+	}
+
+	// Check --backup flag on reset
+	backupFlag := resetCmd.Flags().Lookup("backup")
+	if backupFlag == nil {
+		t.Error("'--backup' flag not found on reset command")
+	}
+}
+
+func TestRunDBInfo_NoDatabase(t *testing.T) {
+	resetFlags()
+	out := &bytes.Buffer{}
+	app := newTestApp(out)
+
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "nonexistent.db")
+
+	oldGetDBPath := getDBPath
+	getDBPath = func() (string, error) { return dbPath, nil }
+	defer func() { getDBPath = oldGetDBPath }()
+
+	err := runDBInfo(app)
+	if err != nil {
+		t.Errorf("runDBInfo() error = %v", err)
+	}
+
+	output := out.String()
+	if !strings.Contains(output, "Database location:") {
+		t.Error("output missing database location")
+	}
+	if !strings.Contains(output, "does not exist") {
+		t.Error("output should indicate database doesn't exist")
+	}
+}
+
+func TestRunDBInfo_WithDatabase(t *testing.T) {
+	resetFlags()
+	out := &bytes.Buffer{}
+	app := newTestApp(out)
+
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+	store, err := session.NewStoreWithPath(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+
+	ctx := context.Background()
+	store.LogCost(ctx, &session.CostEntry{
+		Provider:   "openai",
+		Model:      "gpt-image-1",
+		Cost:       0.042,
+		ImageCount: 1,
+		Timestamp:  time.Now(),
+	})
+	store.Close()
+
+	oldGetDBPath := getDBPath
+	getDBPath = func() (string, error) { return dbPath, nil }
+	defer func() { getDBPath = oldGetDBPath }()
+
+	err = runDBInfo(app)
+	if err != nil {
+		t.Errorf("runDBInfo() error = %v", err)
+	}
+
+	output := out.String()
+	if !strings.Contains(output, "Database location:") {
+		t.Error("output missing database location")
+	}
+	if !strings.Contains(output, "Database size:") {
+		t.Error("output missing database size")
+	}
+	if !strings.Contains(output, "Statistics:") {
+		t.Error("output missing statistics")
+	}
+	if !strings.Contains(output, "Sessions:") {
+		t.Error("output missing session count")
+	}
+	if !strings.Contains(output, "Total cost:") {
+		t.Error("output missing total cost")
+	}
+}
+
+func TestRunDBReset_NoDatabase(t *testing.T) {
+	resetFlags()
+	out := &bytes.Buffer{}
+	app := newTestApp(out)
+
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "nonexistent.db")
+
+	oldGetDBPath := getDBPath
+	getDBPath = func() (string, error) { return dbPath, nil }
+	defer func() { getDBPath = oldGetDBPath }()
+
+	err := runDBReset(app)
+	if err != nil {
+		t.Errorf("runDBReset() error = %v", err)
+	}
+
+	output := out.String()
+	if !strings.Contains(output, "nothing to reset") {
+		t.Error("output should indicate nothing to reset")
+	}
+}
+
+func TestRunDBReset_WithDatabase(t *testing.T) {
+	resetFlags()
+	out := &bytes.Buffer{}
+	app := newTestApp(out)
+
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+	store, err := session.NewStoreWithPath(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	store.Close()
+
+	oldGetDBPath := getDBPath
+	getDBPath = func() (string, error) { return dbPath, nil }
+	defer func() { getDBPath = oldGetDBPath }()
+
+	err = runDBReset(app)
+	if err != nil {
+		t.Errorf("runDBReset() error = %v", err)
+	}
+
+	output := out.String()
+	if !strings.Contains(output, "Database deleted successfully") {
+		t.Error("output should confirm deletion")
+	}
+	if !strings.Contains(output, "Fresh database created") {
+		t.Error("output should confirm new database creation")
+	}
+
+	// Verify database was recreated
+	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+		t.Error("database was not recreated")
+	}
+}
+
+func TestRunDBReset_WithBackup(t *testing.T) {
+	resetFlags()
+	out := &bytes.Buffer{}
+	app := newTestApp(out)
+	flagDBBackup = true
+
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+	store, err := session.NewStoreWithPath(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+
+	ctx := context.Background()
+	store.LogCost(ctx, &session.CostEntry{
+		Provider:   "openai",
+		Model:      "gpt-image-1",
+		Cost:       0.042,
+		ImageCount: 1,
+		Timestamp:  time.Now(),
+	})
+	store.Close()
+
+	oldGetDBPath := getDBPath
+	getDBPath = func() (string, error) { return dbPath, nil }
+	defer func() { getDBPath = oldGetDBPath }()
+
+	err = runDBReset(app)
+	if err != nil {
+		t.Errorf("runDBReset() error = %v", err)
+	}
+
+	output := out.String()
+	if !strings.Contains(output, "Backup saved to:") {
+		t.Error("output should confirm backup")
+	}
+
+	// Check backup file was created
+	files, _ := filepath.Glob(filepath.Join(tmpDir, "test.db.backup-*"))
+	if len(files) == 0 {
+		t.Error("backup file was not created")
+	}
+}
+
+func TestGetDBPath(t *testing.T) {
+	path, err := getDBPath()
+	if err != nil {
+		t.Errorf("getDBPath() error = %v", err)
+	}
+	if !strings.Contains(path, ".imggen") {
+		t.Error("path should contain .imggen directory")
+	}
+	if !strings.HasSuffix(path, "sessions.db") {
+		t.Error("path should end with sessions.db")
+	}
+}
+
+func TestRootCmd_HasCostSubcommand(t *testing.T) {
+	out := &bytes.Buffer{}
+	app := newTestApp(out)
+	cmd := newRootCmd(app)
+
+	costCmd, _, err := cmd.Find([]string{"cost"})
+	if err != nil {
+		t.Errorf("cost subcommand not found: %v", err)
+	}
+	if costCmd == nil {
+		t.Error("cost subcommand is nil")
+	}
+}
+
+func TestRootCmd_HasDBSubcommand(t *testing.T) {
+	out := &bytes.Buffer{}
+	app := newTestApp(out)
+	cmd := newRootCmd(app)
+
+	dbCmd, _, err := cmd.Find([]string{"db"})
+	if err != nil {
+		t.Errorf("db subcommand not found: %v", err)
+	}
+	if dbCmd == nil {
+		t.Error("db subcommand is nil")
 	}
 }

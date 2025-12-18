@@ -386,3 +386,442 @@ func TestFormatTimestamp(t *testing.T) {
 		t.Errorf("FormatTimestamp() = %v, want %v", got, want)
 	}
 }
+
+func TestStore_LogCost(t *testing.T) {
+	store, cleanup := testStore(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	// Create session and iteration first
+	sess := &Session{
+		ID:        "test-session-1",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+		Model:     "gpt-image-1",
+	}
+	if err := store.CreateSession(ctx, sess); err != nil {
+		t.Fatalf("CreateSession() error = %v", err)
+	}
+
+	iter := &Iteration{
+		ID:        "iter-1",
+		SessionID: sess.ID,
+		Operation: "generate",
+		Prompt:    "test",
+		Model:     "gpt-image-1",
+		ImagePath: "/path/to/image.png",
+		Timestamp: time.Now(),
+	}
+	if err := store.CreateIteration(ctx, iter); err != nil {
+		t.Fatalf("CreateIteration() error = %v", err)
+	}
+
+	entry := &CostEntry{
+		IterationID: iter.ID,
+		SessionID:   sess.ID,
+		Provider:    "openai",
+		Model:       "gpt-image-1",
+		Cost:        0.042,
+		ImageCount:  1,
+		Timestamp:   time.Now(),
+	}
+
+	if err := store.LogCost(ctx, entry); err != nil {
+		t.Fatalf("LogCost() error = %v", err)
+	}
+}
+
+func TestStore_GetTotalCost_Empty(t *testing.T) {
+	store, cleanup := testStore(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	summary, err := store.GetTotalCost(ctx)
+	if err != nil {
+		t.Fatalf("GetTotalCost() error = %v", err)
+	}
+
+	if summary.TotalCost != 0 {
+		t.Errorf("GetTotalCost() TotalCost = %v, want 0", summary.TotalCost)
+	}
+	if summary.ImageCount != 0 {
+		t.Errorf("GetTotalCost() ImageCount = %v, want 0", summary.ImageCount)
+	}
+	if summary.EntryCount != 0 {
+		t.Errorf("GetTotalCost() EntryCount = %v, want 0", summary.EntryCount)
+	}
+}
+
+func TestStore_GetTotalCost_WithEntries(t *testing.T) {
+	store, cleanup := testStore(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	// Create session and iterations
+	sess := &Session{
+		ID:        "test-session-1",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+		Model:     "gpt-image-1",
+	}
+	store.CreateSession(ctx, sess)
+
+	now := time.Now()
+	entries := []CostEntry{
+		{IterationID: "i1", SessionID: sess.ID, Provider: "openai", Model: "gpt-image-1", Cost: 0.042, ImageCount: 1, Timestamp: now},
+		{IterationID: "i2", SessionID: sess.ID, Provider: "openai", Model: "dall-e-3", Cost: 0.080, ImageCount: 1, Timestamp: now},
+		{IterationID: "i3", SessionID: sess.ID, Provider: "openai", Model: "gpt-image-1", Cost: 0.167, ImageCount: 2, Timestamp: now},
+	}
+
+	// Create iterations for foreign key constraints
+	for i, e := range entries {
+		iter := &Iteration{
+			ID:        e.IterationID,
+			SessionID: sess.ID,
+			Operation: "generate",
+			Prompt:    "test",
+			Model:     e.Model,
+			ImagePath: "/path.png",
+			Timestamp: now,
+		}
+		store.CreateIteration(ctx, iter)
+		store.LogCost(ctx, &entries[i])
+	}
+
+	summary, err := store.GetTotalCost(ctx)
+	if err != nil {
+		t.Fatalf("GetTotalCost() error = %v", err)
+	}
+
+	expectedTotal := 0.042 + 0.080 + 0.167
+	if !floatEquals(summary.TotalCost, expectedTotal) {
+		t.Errorf("GetTotalCost() TotalCost = %v, want %v", summary.TotalCost, expectedTotal)
+	}
+	if summary.ImageCount != 4 {
+		t.Errorf("GetTotalCost() ImageCount = %v, want 4", summary.ImageCount)
+	}
+	if summary.EntryCount != 3 {
+		t.Errorf("GetTotalCost() EntryCount = %v, want 3", summary.EntryCount)
+	}
+}
+
+func TestStore_GetSessionCost(t *testing.T) {
+	store, cleanup := testStore(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	// Create two sessions
+	sess1 := &Session{ID: "sess-1", CreatedAt: time.Now(), UpdatedAt: time.Now(), Model: "gpt-image-1"}
+	sess2 := &Session{ID: "sess-2", CreatedAt: time.Now(), UpdatedAt: time.Now(), Model: "gpt-image-1"}
+	store.CreateSession(ctx, sess1)
+	store.CreateSession(ctx, sess2)
+
+	now := time.Now()
+
+	// Session 1 entries
+	iter1 := &Iteration{ID: "i1", SessionID: sess1.ID, Operation: "generate", Prompt: "test", Model: "gpt-image-1", ImagePath: "/p.png", Timestamp: now}
+	store.CreateIteration(ctx, iter1)
+	store.LogCost(ctx, &CostEntry{IterationID: "i1", SessionID: sess1.ID, Provider: "openai", Model: "gpt-image-1", Cost: 0.042, ImageCount: 1, Timestamp: now})
+
+	iter2 := &Iteration{ID: "i2", SessionID: sess1.ID, Operation: "edit", Prompt: "test", Model: "gpt-image-1", ImagePath: "/p.png", Timestamp: now}
+	store.CreateIteration(ctx, iter2)
+	store.LogCost(ctx, &CostEntry{IterationID: "i2", SessionID: sess1.ID, Provider: "openai", Model: "gpt-image-1", Cost: 0.042, ImageCount: 1, Timestamp: now})
+
+	// Session 2 entry
+	iter3 := &Iteration{ID: "i3", SessionID: sess2.ID, Operation: "generate", Prompt: "test", Model: "dall-e-3", ImagePath: "/p.png", Timestamp: now}
+	store.CreateIteration(ctx, iter3)
+	store.LogCost(ctx, &CostEntry{IterationID: "i3", SessionID: sess2.ID, Provider: "openai", Model: "dall-e-3", Cost: 0.120, ImageCount: 1, Timestamp: now})
+
+	// Check session 1
+	summary1, err := store.GetSessionCost(ctx, sess1.ID)
+	if err != nil {
+		t.Fatalf("GetSessionCost() error = %v", err)
+	}
+	if !floatEquals(summary1.TotalCost, 0.084) {
+		t.Errorf("GetSessionCost(sess1) TotalCost = %v, want 0.084", summary1.TotalCost)
+	}
+	if summary1.ImageCount != 2 {
+		t.Errorf("GetSessionCost(sess1) ImageCount = %v, want 2", summary1.ImageCount)
+	}
+
+	// Check session 2
+	summary2, err := store.GetSessionCost(ctx, sess2.ID)
+	if err != nil {
+		t.Fatalf("GetSessionCost() error = %v", err)
+	}
+	if !floatEquals(summary2.TotalCost, 0.120) {
+		t.Errorf("GetSessionCost(sess2) TotalCost = %v, want 0.120", summary2.TotalCost)
+	}
+}
+
+func TestStore_GetCostByProvider(t *testing.T) {
+	store, cleanup := testStore(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	sess := &Session{ID: "sess-1", CreatedAt: time.Now(), UpdatedAt: time.Now(), Model: "gpt-image-1"}
+	store.CreateSession(ctx, sess)
+
+	now := time.Now()
+
+	// Create entries with different providers
+	entries := []struct {
+		iterID   string
+		provider string
+		cost     float64
+		count    int
+	}{
+		{"i1", "openai", 0.042, 1},
+		{"i2", "openai", 0.080, 1},
+		{"i3", "openai", 0.167, 2},
+		{"i4", "stability", 0.050, 1},
+		{"i5", "stability", 0.100, 2},
+	}
+
+	for _, e := range entries {
+		iter := &Iteration{ID: e.iterID, SessionID: sess.ID, Operation: "generate", Prompt: "test", Model: "model", ImagePath: "/p.png", Timestamp: now}
+		store.CreateIteration(ctx, iter)
+		store.LogCost(ctx, &CostEntry{IterationID: e.iterID, SessionID: sess.ID, Provider: e.provider, Model: "model", Cost: e.cost, ImageCount: e.count, Timestamp: now})
+	}
+
+	summaries, err := store.GetCostByProvider(ctx)
+	if err != nil {
+		t.Fatalf("GetCostByProvider() error = %v", err)
+	}
+
+	if len(summaries) != 2 {
+		t.Fatalf("GetCostByProvider() returned %d providers, want 2", len(summaries))
+	}
+
+	providerMap := make(map[string]ProviderCostSummary)
+	for _, s := range summaries {
+		providerMap[s.Provider] = s
+	}
+
+	openaiSummary := providerMap["openai"]
+	if !floatEquals(openaiSummary.TotalCost, 0.289) {
+		t.Errorf("OpenAI TotalCost = %v, want 0.289", openaiSummary.TotalCost)
+	}
+	if openaiSummary.ImageCount != 4 {
+		t.Errorf("OpenAI ImageCount = %v, want 4", openaiSummary.ImageCount)
+	}
+
+	stabilitySummary := providerMap["stability"]
+	if !floatEquals(stabilitySummary.TotalCost, 0.150) {
+		t.Errorf("Stability TotalCost = %v, want 0.150", stabilitySummary.TotalCost)
+	}
+	if stabilitySummary.ImageCount != 3 {
+		t.Errorf("Stability ImageCount = %v, want 3", stabilitySummary.ImageCount)
+	}
+}
+
+func TestStore_GetCostByDateRange(t *testing.T) {
+	store, cleanup := testStore(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	sess := &Session{ID: "sess-1", CreatedAt: time.Now(), UpdatedAt: time.Now(), Model: "gpt-image-1"}
+	store.CreateSession(ctx, sess)
+
+	now := time.Now()
+	yesterday := now.Add(-24 * time.Hour)
+	twoDaysAgo := now.Add(-48 * time.Hour)
+	threeDaysAgo := now.Add(-72 * time.Hour)
+
+	// Create entries at different times
+	entries := []struct {
+		iterID string
+		ts     time.Time
+		cost   float64
+		count  int
+	}{
+		{"i1", threeDaysAgo, 0.042, 1},
+		{"i2", twoDaysAgo, 0.080, 1},
+		{"i3", yesterday, 0.167, 2},
+		{"i4", now, 0.040, 1},
+	}
+
+	for _, e := range entries {
+		iter := &Iteration{ID: e.iterID, SessionID: sess.ID, Operation: "generate", Prompt: "test", Model: "model", ImagePath: "/p.png", Timestamp: e.ts}
+		store.CreateIteration(ctx, iter)
+		store.LogCost(ctx, &CostEntry{IterationID: e.iterID, SessionID: sess.ID, Provider: "openai", Model: "model", Cost: e.cost, ImageCount: e.count, Timestamp: e.ts})
+	}
+
+	// Query for last 2 days (yesterday and today)
+	start := time.Date(yesterday.Year(), yesterday.Month(), yesterday.Day(), 0, 0, 0, 0, yesterday.Location())
+	end := now.Add(24 * time.Hour)
+
+	summary, err := store.GetCostByDateRange(ctx, start, end)
+	if err != nil {
+		t.Fatalf("GetCostByDateRange() error = %v", err)
+	}
+
+	// Should include yesterday (0.167) and today (0.040)
+	expectedTotal := 0.167 + 0.040
+	if !floatEquals(summary.TotalCost, expectedTotal) {
+		t.Errorf("GetCostByDateRange() TotalCost = %v, want %v", summary.TotalCost, expectedTotal)
+	}
+	if summary.ImageCount != 3 {
+		t.Errorf("GetCostByDateRange() ImageCount = %v, want 3", summary.ImageCount)
+	}
+	if summary.EntryCount != 2 {
+		t.Errorf("GetCostByDateRange() EntryCount = %v, want 2", summary.EntryCount)
+	}
+}
+
+func TestStore_GetCostByDateRange_NoResults(t *testing.T) {
+	store, cleanup := testStore(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	// Query for a range with no data
+	now := time.Now()
+	start := now.Add(-100 * 24 * time.Hour)
+	end := now.Add(-90 * 24 * time.Hour)
+
+	summary, err := store.GetCostByDateRange(ctx, start, end)
+	if err != nil {
+		t.Fatalf("GetCostByDateRange() error = %v", err)
+	}
+
+	if summary.TotalCost != 0 {
+		t.Errorf("GetCostByDateRange() TotalCost = %v, want 0", summary.TotalCost)
+	}
+	if summary.EntryCount != 0 {
+		t.Errorf("GetCostByDateRange() EntryCount = %v, want 0", summary.EntryCount)
+	}
+}
+
+func TestStore_GetCostByProvider_Empty(t *testing.T) {
+	store, cleanup := testStore(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	summaries, err := store.GetCostByProvider(ctx)
+	if err != nil {
+		t.Fatalf("GetCostByProvider() error = %v", err)
+	}
+
+	if len(summaries) != 0 {
+		t.Errorf("GetCostByProvider() returned %d providers, want 0", len(summaries))
+	}
+}
+
+func TestStore_GetSessionCost_Empty(t *testing.T) {
+	store, cleanup := testStore(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	sess := &Session{ID: "sess-1", CreatedAt: time.Now(), UpdatedAt: time.Now(), Model: "gpt-image-1"}
+	store.CreateSession(ctx, sess)
+
+	summary, err := store.GetSessionCost(ctx, sess.ID)
+	if err != nil {
+		t.Fatalf("GetSessionCost() error = %v", err)
+	}
+
+	if summary.TotalCost != 0 {
+		t.Errorf("GetSessionCost() TotalCost = %v, want 0", summary.TotalCost)
+	}
+	if summary.EntryCount != 0 {
+		t.Errorf("GetSessionCost() EntryCount = %v, want 0", summary.EntryCount)
+	}
+}
+
+func TestStore_GetSessionCost_NonExistentSession(t *testing.T) {
+	store, cleanup := testStore(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	summary, err := store.GetSessionCost(ctx, "non-existent")
+	if err != nil {
+		t.Fatalf("GetSessionCost() error = %v", err)
+	}
+
+	if summary.TotalCost != 0 {
+		t.Errorf("GetSessionCost() TotalCost = %v, want 0", summary.TotalCost)
+	}
+}
+
+func TestCostEntry_Structure(t *testing.T) {
+	entry := CostEntry{
+		IterationID: "iter-1",
+		SessionID:   "sess-1",
+		Provider:    "openai",
+		Model:       "gpt-image-1",
+		Cost:        0.042,
+		ImageCount:  1,
+		Timestamp:   time.Now(),
+	}
+
+	if entry.IterationID != "iter-1" {
+		t.Error("CostEntry IterationID mismatch")
+	}
+	if entry.Provider != "openai" {
+		t.Error("CostEntry Provider mismatch")
+	}
+	if entry.Cost != 0.042 {
+		t.Error("CostEntry Cost mismatch")
+	}
+}
+
+func TestCostSummary_Structure(t *testing.T) {
+	summary := CostSummary{
+		TotalCost:  0.289,
+		ImageCount: 4,
+		EntryCount: 3,
+	}
+
+	if summary.TotalCost != 0.289 {
+		t.Error("CostSummary TotalCost mismatch")
+	}
+	if summary.ImageCount != 4 {
+		t.Error("CostSummary ImageCount mismatch")
+	}
+	if summary.EntryCount != 3 {
+		t.Error("CostSummary EntryCount mismatch")
+	}
+}
+
+func TestProviderCostSummary_Structure(t *testing.T) {
+	summary := ProviderCostSummary{
+		Provider:   "openai",
+		TotalCost:  0.289,
+		ImageCount: 4,
+	}
+
+	if summary.Provider != "openai" {
+		t.Error("ProviderCostSummary Provider mismatch")
+	}
+	if summary.TotalCost != 0.289 {
+		t.Error("ProviderCostSummary TotalCost mismatch")
+	}
+}
+
+func TestIterationMetadata_WithCost(t *testing.T) {
+	m := &IterationMetadata{
+		Size:     "1024x1024",
+		Quality:  "high",
+		Format:   "png",
+		Cost:     0.167,
+		Provider: "openai",
+	}
+
+	json := m.ToJSON()
+	if json == "" {
+		t.Error("ToJSON() returned empty string")
+	}
+
+	parsed := ParseIterationMetadata(json)
+	if !floatEquals(parsed.Cost, 0.167) {
+		t.Errorf("ParseIterationMetadata() Cost = %v, want 0.167", parsed.Cost)
+	}
+	if parsed.Provider != "openai" {
+		t.Errorf("ParseIterationMetadata() Provider = %v, want openai", parsed.Provider)
+	}
+}
+
+func floatEquals(a, b float64) bool {
+	const epsilon = 0.0001
+	return (a-b) < epsilon && (b-a) < epsilon
+}

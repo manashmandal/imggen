@@ -58,10 +58,11 @@ Commands:
 - `history` - Show iteration history
 - `session list|load|new|rename` - Manage sessions
 - `model [name]` - Get/set model
+- `cost [today|week|month|total|provider|session]` - View costs
 - `help` - Show all commands
 - `quit` - Exit
 
-Sessions are persisted in `~/.imggen/sessions.db` with full history.
+Sessions and costs are persisted in `~/.imggen/sessions.db`.
 
 ## Flags
 
@@ -102,6 +103,52 @@ imggen -S "a beautiful landscape"
 imggen -i
 > generate a red apple
 > edit make it green
+```
+
+## Cost Tracking
+
+All image generation costs are automatically tracked. View your spending:
+
+```bash
+# View total costs
+imggen cost
+
+# View today's costs
+imggen cost today
+
+# View this week's costs
+imggen cost week
+
+# View this month's costs
+imggen cost month
+
+# View costs by provider
+imggen cost provider
+```
+
+Example output:
+```
+$ imggen cost provider
+Provider       Images       Cost
+--------------------------------
+openai             42    $1.6800
+--------------------------------
+Total              42    $1.6800
+```
+
+## Database Management
+
+Manage the SQLite database (`~/.imggen/sessions.db`):
+
+```bash
+# Show database info and statistics
+imggen db info
+
+# Reset database (creates fresh database)
+imggen db reset
+
+# Reset with backup (saves old data to timestamped file)
+imggen db reset --backup
 ```
 
 ## Environment Variables

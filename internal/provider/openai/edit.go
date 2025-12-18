@@ -123,7 +123,18 @@ func (p *Provider) Edit(ctx context.Context, req *models.EditRequest) (*models.R
 		return nil, fmt.Errorf("%w: status %d", provider.ErrEditFailed, resp.StatusCode)
 	}
 
-	return p.buildResponse(apiResp)
+	response, err := p.buildResponse(apiResp)
+	if err != nil {
+		return nil, err
+	}
+
+	// Edit operations use medium quality for gpt-image-1, no quality for dall-e-2
+	quality := ""
+	if req.Model == "gpt-image-1" {
+		quality = "medium"
+	}
+	response.Cost = p.costCalc.Calculate(models.ProviderOpenAI, req.Model, req.Size, quality, len(response.Images))
+	return response, nil
 }
 
 func createFormFileWithContentType(w *multipart.Writer, fieldname, filename, contentType string) (io.Writer, error) {

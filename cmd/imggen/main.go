@@ -6,7 +6,9 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -119,7 +121,116 @@ Examples:
 	cmd.Flags().BoolVarP(&flagInteractive, "interactive", "i", false, "start interactive editing mode")
 	cmd.Flags().BoolVarP(&flagVerbose, "verbose", "v", false, "log HTTP requests and responses (API keys redacted)")
 
+	cmd.AddCommand(newCostCmd(app))
+	cmd.AddCommand(newDBCmd(app))
+
 	return cmd
+}
+
+func newCostCmd(app *App) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "cost [today|week|month|total|provider]",
+		Short: "View cost tracking information",
+		Long: `View cost tracking information for image generation.
+
+Subcommands:
+  today     - Show today's costs
+  week      - Show this week's costs (last 7 days)
+  month     - Show this month's costs (last 30 days)
+  total     - Show all-time total costs (default)
+  provider  - Show costs broken down by provider
+
+Examples:
+  imggen cost           # show total costs
+  imggen cost today     # show today's costs
+  imggen cost provider  # show costs by provider`,
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runCost(app, args)
+		},
+	}
+	return cmd
+}
+
+func runCost(app *App, args []string) error {
+	ctx := context.Background()
+
+	dbPath, err := getDBPath()
+	if err != nil {
+		return err
+	}
+
+	store, err := session.NewStoreWithPath(dbPath)
+	if err != nil {
+		return fmt.Errorf("failed to open database: %w", err)
+	}
+	defer store.Close()
+
+	subcommand := "total"
+	if len(args) > 0 {
+		subcommand = args[0]
+	}
+
+	fmt.Fprintln(app.Out, "\033[33mNote: Costs estimated from https://openai.com/api/pricing (not returned by API)\033[0m")
+	fmt.Fprintln(app.Out)
+
+	now := time.Now()
+
+	switch subcommand {
+	case "today":
+		start := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+		end := start.Add(24 * time.Hour)
+		summary, err := store.GetCostByDateRange(ctx, start, end)
+		if err != nil {
+			return fmt.Errorf("failed to get costs: %w", err)
+		}
+		fmt.Fprintf(app.Out, "Today's cost: $%.4f (%d image(s))\n", summary.TotalCost, summary.ImageCount)
+
+	case "week":
+		start := now.AddDate(0, 0, -7)
+		summary, err := store.GetCostByDateRange(ctx, start, now)
+		if err != nil {
+			return fmt.Errorf("failed to get costs: %w", err)
+		}
+		fmt.Fprintf(app.Out, "This week's cost: $%.4f (%d image(s))\n", summary.TotalCost, summary.ImageCount)
+
+	case "month":
+		start := now.AddDate(0, 0, -30)
+		summary, err := store.GetCostByDateRange(ctx, start, now)
+		if err != nil {
+			return fmt.Errorf("failed to get costs: %w", err)
+		}
+		fmt.Fprintf(app.Out, "This month's cost: $%.4f (%d image(s))\n", summary.TotalCost, summary.ImageCount)
+
+	case "total":
+		summary, err := store.GetTotalCost(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to get costs: %w", err)
+		}
+		fmt.Fprintf(app.Out, "Total cost: $%.4f (%d image(s))\n", summary.TotalCost, summary.ImageCount)
+
+	case "provider":
+		summaries, err := store.GetCostByProvider(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to get costs: %w", err)
+		}
+		fmt.Fprintf(app.Out, "%-12s %8s %10s\n", "Provider", "Images", "Cost")
+		fmt.Fprintln(app.Out, "--------------------------------")
+		var totalImages int
+		var totalCost float64
+		for _, s := range summaries {
+			fmt.Fprintf(app.Out, "%-12s %8d %10s\n", s.Provider, s.ImageCount, fmt.Sprintf("$%.4f", s.TotalCost))
+			totalImages += s.ImageCount
+			totalCost += s.TotalCost
+		}
+		fmt.Fprintln(app.Out, "--------------------------------")
+		fmt.Fprintf(app.Out, "%-12s %8d %10s\n", "Total", totalImages, fmt.Sprintf("$%.4f", totalCost))
+
+	default:
+		return fmt.Errorf("unknown subcommand %q: use today, week, month, total, or provider", subcommand)
+	}
+
+	return nil
 }
 
 func runGenerate(_ *cobra.Command, args []string, app *App) error {
@@ -184,6 +295,30 @@ func runGenerate(_ *cobra.Command, args []string, app *App) error {
 		fmt.Fprintf(app.Out, "Saved: %s\n", path)
 	}
 
+	if resp.Cost != nil {
+		fmt.Fprintf(app.Out, "Cost: $%.4f (%d image(s) @ $%.4f/image, %s %s %s)\n",
+			resp.Cost.Total, len(resp.Images), resp.Cost.PerImage,
+			req.Model, req.Size, req.Quality)
+
+		// Log cost to database (empty strings for iteration/session as CLI mode doesn't have sessions)
+		store, err := session.NewStore()
+		if err == nil {
+			defer store.Close()
+			costEntry := &session.CostEntry{
+				IterationID: "",
+				SessionID:   "",
+				Provider:    string(prov.Name()),
+				Model:       req.Model,
+				Cost:        resp.Cost.Total,
+				ImageCount:  len(resp.Images),
+				Timestamp:   time.Now(),
+			}
+			if logErr := store.LogCost(ctx, costEntry); logErr != nil {
+				fmt.Fprintf(app.Err, "Warning: failed to log cost: %v\n", logErr)
+			}
+		}
+	}
+
 	if flagShow {
 		if !display.IsTerminalSupported() {
 			fmt.Fprintln(app.Err, "Warning: terminal may not support Kitty graphics protocol")
@@ -240,4 +375,138 @@ func runInteractive(_ *cobra.Command, app *App) error {
 
 	r := repl.New(replCfg)
 	return r.Run(ctx)
+}
+
+var flagDBBackup bool
+
+func newDBCmd(app *App) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "db",
+		Short: "Database management commands",
+		Long:  `Manage the SQLite database storing sessions and cost data.`,
+	}
+
+	infoCmd := &cobra.Command{
+		Use:   "info",
+		Short: "Show database location and statistics",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runDBInfo(app)
+		},
+	}
+
+	resetCmd := &cobra.Command{
+		Use:   "reset",
+		Short: "Reset database (delete all data)",
+		Long: `Reset the database by deleting all data.
+
+Use --backup to save the old database before resetting.
+The backup will be saved as sessions.db.backup-TIMESTAMP`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runDBReset(app)
+		},
+	}
+	resetCmd.Flags().BoolVar(&flagDBBackup, "backup", false, "backup old database before reset")
+
+	cmd.AddCommand(infoCmd)
+	cmd.AddCommand(resetCmd)
+
+	return cmd
+}
+
+func runDBInfo(app *App) error {
+	ctx := context.Background()
+
+	dbPath, err := getDBPath()
+	if err != nil {
+		return err
+	}
+
+	fmt.Fprintf(app.Out, "Database location: %s\n\n", dbPath)
+
+	// Check if file exists
+	info, err := os.Stat(dbPath)
+	if os.IsNotExist(err) {
+		fmt.Fprintln(app.Out, "Database does not exist yet (will be created on first use)")
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("failed to stat database: %w", err)
+	}
+
+	fmt.Fprintf(app.Out, "Database size: %.2f KB\n", float64(info.Size())/1024)
+	fmt.Fprintf(app.Out, "Last modified: %s\n\n", info.ModTime().Format("2006-01-02 15:04:05"))
+
+	store, err := session.NewStoreWithPath(dbPath)
+	if err != nil {
+		return fmt.Errorf("failed to open database: %w", err)
+	}
+	defer store.Close()
+
+	// Get session count
+	sessions, err := store.ListSessions(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to list sessions: %w", err)
+	}
+
+	// Get cost summary
+	costSummary, err := store.GetTotalCost(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get cost summary: %w", err)
+	}
+
+	fmt.Fprintln(app.Out, "Statistics:")
+	fmt.Fprintf(app.Out, "  Sessions: %d\n", len(sessions))
+	fmt.Fprintf(app.Out, "  Total images generated: %d\n", costSummary.ImageCount)
+	fmt.Fprintf(app.Out, "  Total cost: $%.4f\n", costSummary.TotalCost)
+
+	return nil
+}
+
+func runDBReset(app *App) error {
+	dbPath, err := getDBPath()
+	if err != nil {
+		return err
+	}
+
+	// Check if file exists
+	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+		fmt.Fprintln(app.Out, "Database does not exist, nothing to reset")
+		return nil
+	}
+
+	if flagDBBackup {
+		backupPath := dbPath + ".backup-" + time.Now().Format("20060102-150405")
+		data, err := os.ReadFile(dbPath)
+		if err != nil {
+			return fmt.Errorf("failed to read database for backup: %w", err)
+		}
+		if err := os.WriteFile(backupPath, data, 0644); err != nil {
+			return fmt.Errorf("failed to write backup: %w", err)
+		}
+		fmt.Fprintf(app.Out, "Backup saved to: %s\n", backupPath)
+	}
+
+	if err := os.Remove(dbPath); err != nil {
+		return fmt.Errorf("failed to delete database: %w", err)
+	}
+
+	fmt.Fprintln(app.Out, "Database deleted successfully")
+
+	// Create fresh database
+	store, err := session.NewStoreWithPath(dbPath)
+	if err != nil {
+		return fmt.Errorf("failed to create new database: %w", err)
+	}
+	store.Close()
+
+	fmt.Fprintln(app.Out, "Fresh database created")
+	return nil
+}
+
+var getDBPath = func() (string, error) {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("failed to get home directory: %w", err)
+	}
+	return filepath.Join(homeDir, ".imggen", "sessions.db"), nil
 }

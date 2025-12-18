@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/manash/imggen/internal/display"
 	"github.com/manash/imggen/internal/image"
@@ -444,6 +445,7 @@ func TestCommand_Interface(t *testing.T) {
 		&HistoryCommand{},
 		&SessionCommand{},
 		&ModelCommand{},
+		&CostCommand{},
 		&HelpCommand{},
 		&QuitCommand{},
 	}
@@ -461,5 +463,461 @@ func TestCommand_Interface(t *testing.T) {
 			}
 			// Aliases can be nil, that's ok
 		})
+	}
+}
+
+// CostCommand Tests
+
+func TestCostCommand_Metadata(t *testing.T) {
+	cmd := &CostCommand{}
+
+	if cmd.Name() != "cost" {
+		t.Errorf("Name() = %s, want cost", cmd.Name())
+	}
+
+	aliases := cmd.Aliases()
+	if len(aliases) != 1 || aliases[0] != "$" {
+		t.Errorf("Aliases() = %v, want [$]", aliases)
+	}
+
+	if cmd.Description() == "" {
+		t.Error("Description() returned empty string")
+	}
+
+	if !strings.Contains(cmd.Usage(), "cost") {
+		t.Errorf("Usage() = %s, should contain 'cost'", cmd.Usage())
+	}
+}
+
+func TestCostCommand_Registered(t *testing.T) {
+	r, _, _, cleanup := testREPL(t, "")
+	defer cleanup()
+
+	if _, ok := r.commands["cost"]; !ok {
+		t.Error("cost command not registered")
+	}
+	if _, ok := r.commands["$"]; !ok {
+		t.Error("$ alias not registered")
+	}
+}
+
+func TestCostCommand_Total_NoCosts(t *testing.T) {
+	r, out, _, cleanup := testREPL(t, "cost\nquit\n")
+	defer cleanup()
+
+	ctx := context.Background()
+	if err := r.Run(ctx); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	if !strings.Contains(out.String(), "No costs recorded") {
+		t.Error("cost command did not show 'No costs recorded' message")
+	}
+}
+
+func TestCostCommand_Total_Subcommand_NoCosts(t *testing.T) {
+	r, out, _, cleanup := testREPL(t, "cost total\nquit\n")
+	defer cleanup()
+
+	ctx := context.Background()
+	if err := r.Run(ctx); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	if !strings.Contains(out.String(), "No costs recorded") {
+		t.Error("cost total did not show 'No costs recorded' message")
+	}
+}
+
+func TestCostCommand_Today_NoCosts(t *testing.T) {
+	r, out, _, cleanup := testREPL(t, "cost today\nquit\n")
+	defer cleanup()
+
+	ctx := context.Background()
+	if err := r.Run(ctx); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	if !strings.Contains(out.String(), "No costs recorded today") {
+		t.Error("cost today did not show appropriate message")
+	}
+}
+
+func TestCostCommand_Week_NoCosts(t *testing.T) {
+	r, out, _, cleanup := testREPL(t, "cost week\nquit\n")
+	defer cleanup()
+
+	ctx := context.Background()
+	if err := r.Run(ctx); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	if !strings.Contains(out.String(), "No costs recorded in the last 7 days") {
+		t.Error("cost week did not show appropriate message")
+	}
+}
+
+func TestCostCommand_Month_NoCosts(t *testing.T) {
+	r, out, _, cleanup := testREPL(t, "cost month\nquit\n")
+	defer cleanup()
+
+	ctx := context.Background()
+	if err := r.Run(ctx); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	if !strings.Contains(out.String(), "No costs recorded in the last 30 days") {
+		t.Error("cost month did not show appropriate message")
+	}
+}
+
+func TestCostCommand_Provider_NoCosts(t *testing.T) {
+	r, out, _, cleanup := testREPL(t, "cost provider\nquit\n")
+	defer cleanup()
+
+	ctx := context.Background()
+	if err := r.Run(ctx); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	if !strings.Contains(out.String(), "No costs recorded") {
+		t.Error("cost provider did not show 'No costs recorded' message")
+	}
+}
+
+func TestCostCommand_Session_NoSession(t *testing.T) {
+	r, out, _, cleanup := testREPL(t, "cost session\nquit\n")
+	defer cleanup()
+
+	ctx := context.Background()
+	if err := r.Run(ctx); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	if !strings.Contains(out.String(), "No active session") {
+		t.Error("cost session did not show 'No active session' message")
+	}
+}
+
+func TestCostCommand_Session_NoCostsInSession(t *testing.T) {
+	r, out, mgr, cleanup := testREPL(t, "session new test\ncost session\nquit\n")
+	defer cleanup()
+
+	ctx := context.Background()
+	if err := r.Run(ctx); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	if !mgr.HasSession() {
+		t.Error("session should exist")
+	}
+
+	if !strings.Contains(out.String(), "No costs in current session") {
+		t.Error("cost session did not show 'No costs in current session' message")
+	}
+}
+
+func TestCostCommand_UnknownSubcommand(t *testing.T) {
+	r, _, _, cleanup := testREPL(t, "cost unknown\nquit\n")
+	defer cleanup()
+
+	ctx := context.Background()
+	if err := r.Run(ctx); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+}
+
+func TestCostCommand_DollarAlias(t *testing.T) {
+	r, out, _, cleanup := testREPL(t, "$\nquit\n")
+	defer cleanup()
+
+	ctx := context.Background()
+	if err := r.Run(ctx); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	if !strings.Contains(out.String(), "No costs recorded") {
+		t.Error("$ alias did not work for cost command")
+	}
+}
+
+func testREPLWithCosts(t *testing.T, input string) (*REPL, *bytes.Buffer, *session.Manager, func()) {
+	t.Helper()
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpDir)
+
+	store, err := session.NewStoreWithPath(dbPath)
+	if err != nil {
+		t.Fatalf("NewStoreWithPath() error = %v", err)
+	}
+
+	mgr := session.NewManager(store, "gpt-image-1")
+	out := &bytes.Buffer{}
+	errBuf := &bytes.Buffer{}
+
+	cfg := &Config{
+		In:         strings.NewReader(input),
+		Out:        out,
+		Err:        errBuf,
+		Provider:   &mockProvider{},
+		Registry:   models.DefaultRegistry(),
+		SessionMgr: mgr,
+		Displayer:  display.New(out),
+		Saver:      image.NewSaver(),
+	}
+
+	r := New(cfg)
+
+	cleanup := func() {
+		store.Close()
+		os.Setenv("HOME", origHome)
+	}
+
+	return r, out, mgr, cleanup
+}
+
+func createIterationWithCost(t *testing.T, ctx context.Context, mgr *session.Manager, cost float64, imageCount int) {
+	t.Helper()
+
+	iter := &session.Iteration{
+		Operation: "generate",
+		Prompt:    "test prompt",
+		Model:     "gpt-image-1",
+		ImagePath: "/tmp/test.png",
+		Metadata: session.IterationMetadata{
+			Size:     "1024x1024",
+			Quality:  "medium",
+			Cost:     cost,
+			Provider: "openai",
+		},
+	}
+	if err := mgr.AddIteration(ctx, iter); err != nil {
+		t.Fatalf("AddIteration() error = %v", err)
+	}
+
+	entry := &session.CostEntry{
+		IterationID: iter.ID,
+		SessionID:   mgr.Current().ID,
+		Provider:    "openai",
+		Model:       "gpt-image-1",
+		Cost:        cost,
+		ImageCount:  imageCount,
+		Timestamp:   time.Now(),
+	}
+	if err := mgr.LogCost(ctx, entry); err != nil {
+		t.Fatalf("LogCost() error = %v", err)
+	}
+}
+
+func TestCostCommand_WithCosts(t *testing.T) {
+	r, out, mgr, cleanup := testREPLWithCosts(t, "")
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create a session
+	if _, err := mgr.StartNew(ctx, "test-session"); err != nil {
+		t.Fatalf("StartNew() error = %v", err)
+	}
+
+	createIterationWithCost(t, ctx, mgr, 0.042, 1)
+
+	// Test total command
+	cmd := &CostCommand{}
+	if err := cmd.Execute(ctx, r, []string{"total"}); err != nil {
+		t.Errorf("Execute(total) error = %v", err)
+	}
+
+	output := out.String()
+	if !strings.Contains(output, "Total cost:") {
+		t.Error("cost total did not show cost summary")
+	}
+	if !strings.Contains(output, "$0.0420") {
+		t.Errorf("cost total did not show correct amount, got: %s", output)
+	}
+}
+
+func TestCostCommand_Today_WithCosts(t *testing.T) {
+	r, out, mgr, cleanup := testREPLWithCosts(t, "")
+	defer cleanup()
+
+	ctx := context.Background()
+
+	if _, err := mgr.StartNew(ctx, "test-session"); err != nil {
+		t.Fatalf("StartNew() error = %v", err)
+	}
+
+	createIterationWithCost(t, ctx, mgr, 0.167, 1)
+
+	cmd := &CostCommand{}
+	if err := cmd.Execute(ctx, r, []string{"today"}); err != nil {
+		t.Errorf("Execute(today) error = %v", err)
+	}
+
+	output := out.String()
+	if !strings.Contains(output, "Today's cost:") {
+		t.Error("cost today did not show cost summary")
+	}
+	if !strings.Contains(output, "$0.1670") {
+		t.Errorf("cost today did not show correct amount, got: %s", output)
+	}
+}
+
+func TestCostCommand_Provider_WithCosts(t *testing.T) {
+	r, out, mgr, cleanup := testREPLWithCosts(t, "")
+	defer cleanup()
+
+	ctx := context.Background()
+
+	if _, err := mgr.StartNew(ctx, "test-session"); err != nil {
+		t.Fatalf("StartNew() error = %v", err)
+	}
+
+	// Log multiple costs
+	createIterationWithCost(t, ctx, mgr, 0.042, 1)
+	createIterationWithCost(t, ctx, mgr, 0.080, 1)
+
+	cmd := &CostCommand{}
+	if err := cmd.Execute(ctx, r, []string{"provider"}); err != nil {
+		t.Errorf("Execute(provider) error = %v", err)
+	}
+
+	output := out.String()
+	if !strings.Contains(output, "Provider") {
+		t.Error("cost provider did not show header")
+	}
+	if !strings.Contains(output, "openai") {
+		t.Error("cost provider did not show openai provider")
+	}
+	if !strings.Contains(output, "Total") {
+		t.Error("cost provider did not show total row")
+	}
+}
+
+func TestCostCommand_Session_WithCosts(t *testing.T) {
+	r, out, mgr, cleanup := testREPLWithCosts(t, "")
+	defer cleanup()
+
+	ctx := context.Background()
+
+	if _, err := mgr.StartNew(ctx, "test-session"); err != nil {
+		t.Fatalf("StartNew() error = %v", err)
+	}
+
+	createIterationWithCost(t, ctx, mgr, 0.011, 1)
+
+	cmd := &CostCommand{}
+	if err := cmd.Execute(ctx, r, []string{"session"}); err != nil {
+		t.Errorf("Execute(session) error = %v", err)
+	}
+
+	output := out.String()
+	if !strings.Contains(output, "Session cost:") {
+		t.Error("cost session did not show session cost")
+	}
+	if !strings.Contains(output, "$0.0110") {
+		t.Errorf("cost session did not show correct amount, got: %s", output)
+	}
+}
+
+func TestCostCommand_Week_WithCosts(t *testing.T) {
+	r, out, mgr, cleanup := testREPLWithCosts(t, "")
+	defer cleanup()
+
+	ctx := context.Background()
+
+	if _, err := mgr.StartNew(ctx, "test-session"); err != nil {
+		t.Fatalf("StartNew() error = %v", err)
+	}
+
+	createIterationWithCost(t, ctx, mgr, 0.250, 1)
+
+	cmd := &CostCommand{}
+	if err := cmd.Execute(ctx, r, []string{"week"}); err != nil {
+		t.Errorf("Execute(week) error = %v", err)
+	}
+
+	output := out.String()
+	if !strings.Contains(output, "Last 7 days cost:") {
+		t.Error("cost week did not show weekly cost")
+	}
+	if !strings.Contains(output, "$0.2500") {
+		t.Errorf("cost week did not show correct amount, got: %s", output)
+	}
+}
+
+func TestCostCommand_Month_WithCosts(t *testing.T) {
+	r, out, mgr, cleanup := testREPLWithCosts(t, "")
+	defer cleanup()
+
+	ctx := context.Background()
+
+	if _, err := mgr.StartNew(ctx, "test-session"); err != nil {
+		t.Fatalf("StartNew() error = %v", err)
+	}
+
+	createIterationWithCost(t, ctx, mgr, 0.063, 1)
+
+	cmd := &CostCommand{}
+	if err := cmd.Execute(ctx, r, []string{"month"}); err != nil {
+		t.Errorf("Execute(month) error = %v", err)
+	}
+
+	output := out.String()
+	if !strings.Contains(output, "Last 30 days cost:") {
+		t.Error("cost month did not show monthly cost")
+	}
+	if !strings.Contains(output, "$0.0630") {
+		t.Errorf("cost month did not show correct amount, got: %s", output)
+	}
+}
+
+func TestCostCommand_MultipleImages(t *testing.T) {
+	r, out, mgr, cleanup := testREPLWithCosts(t, "")
+	defer cleanup()
+
+	ctx := context.Background()
+
+	if _, err := mgr.StartNew(ctx, "test-session"); err != nil {
+		t.Fatalf("StartNew() error = %v", err)
+	}
+
+	createIterationWithCost(t, ctx, mgr, 0.126, 3) // 3 images at $0.042 each
+
+	cmd := &CostCommand{}
+	if err := cmd.Execute(ctx, r, []string{"total"}); err != nil {
+		t.Errorf("Execute(total) error = %v", err)
+	}
+
+	output := out.String()
+	if !strings.Contains(output, "3 image(s)") {
+		t.Errorf("cost total did not show correct image count, got: %s", output)
+	}
+}
+
+func TestCostCommand_DefaultWithoutArgs(t *testing.T) {
+	r, out, mgr, cleanup := testREPLWithCosts(t, "")
+	defer cleanup()
+
+	ctx := context.Background()
+
+	if _, err := mgr.StartNew(ctx, "test-session"); err != nil {
+		t.Fatalf("StartNew() error = %v", err)
+	}
+
+	createIterationWithCost(t, ctx, mgr, 0.042, 1)
+
+	// Execute without subcommand - should default to total
+	cmd := &CostCommand{}
+	if err := cmd.Execute(ctx, r, []string{}); err != nil {
+		t.Errorf("Execute() without args error = %v", err)
+	}
+
+	output := out.String()
+	if !strings.Contains(output, "Total cost:") {
+		t.Error("cost without args did not default to total")
 	}
 }
