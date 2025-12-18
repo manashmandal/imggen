@@ -30,6 +30,7 @@ type Config struct {
 	APIKey     string
 	BaseURL    string
 	TimeoutSec int
+	Verbose    bool
 }
 
 type Factory struct {
