@@ -37,8 +37,8 @@ CREATE TABLE IF NOT EXISTS iterations (
 
 CREATE TABLE IF NOT EXISTS cost_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    iteration_id TEXT NOT NULL,
-    session_id TEXT NOT NULL,
+    iteration_id TEXT,
+    session_id TEXT,
     provider TEXT NOT NULL,
     model TEXT NOT NULL,
     cost REAL NOT NULL,
@@ -81,6 +81,56 @@ func NewStoreWithPath(dbPath string) (*Store, error) {
 	if _, err := db.Exec(schema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("failed to create schema: %w", err)
+	}
+
+	// Migration: make iteration_id and session_id nullable in cost_log
+	// This allows CLI mode to log costs without sessions
+	needsMigration := func() bool {
+		rows, err := db.Query("PRAGMA table_info(cost_log)")
+		if err != nil {
+			return false
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var cid int
+			var name, typ string
+			var notNull, pk int
+			var dflt interface{}
+			if rows.Scan(&cid, &name, &typ, &notNull, &dflt, &pk) == nil {
+				if name == "iteration_id" && notNull == 1 {
+					return true
+				}
+			}
+		}
+		return false
+	}()
+
+	if needsMigration {
+		// Clean up any interrupted migration
+		db.Exec("DROP TABLE IF EXISTS cost_log_new")
+		// Create new table with nullable columns
+		db.Exec(`
+			CREATE TABLE cost_log_new (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				iteration_id TEXT,
+				session_id TEXT,
+				provider TEXT NOT NULL,
+				model TEXT NOT NULL,
+				cost REAL NOT NULL,
+				image_count INTEGER NOT NULL DEFAULT 1,
+				timestamp DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				FOREIGN KEY (iteration_id) REFERENCES iterations(id) ON DELETE CASCADE,
+				FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+			)`)
+		// Copy existing data
+		db.Exec(`INSERT INTO cost_log_new SELECT * FROM cost_log`)
+		// Drop old table and rename new one
+		db.Exec(`DROP TABLE cost_log`)
+		db.Exec(`ALTER TABLE cost_log_new RENAME TO cost_log`)
+		// Recreate indexes
+		db.Exec(`CREATE INDEX IF NOT EXISTS idx_cost_log_timestamp ON cost_log(timestamp)`)
+		db.Exec(`CREATE INDEX IF NOT EXISTS idx_cost_log_provider ON cost_log(provider)`)
+		db.Exec(`CREATE INDEX IF NOT EXISTS idx_cost_log_session_id ON cost_log(session_id)`)
 	}
 
 	if _, err := db.Exec("PRAGMA foreign_keys = ON"); err != nil {
@@ -288,7 +338,7 @@ func (s *Store) LogCost(ctx context.Context, entry *CostEntry) error {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO cost_log (iteration_id, session_id, provider, model, cost, image_count, timestamp)
 		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		entry.IterationID, entry.SessionID, entry.Provider, entry.Model,
+		nullString(entry.IterationID), nullString(entry.SessionID), entry.Provider, entry.Model,
 		entry.Cost, entry.ImageCount, entry.Timestamp)
 	return err
 }

@@ -1504,3 +1504,444 @@ func TestProvider_Edit_WithVerbose(t *testing.T) {
 		t.Error("Edit() with verbose should show multipart form info")
 	}
 }
+
+// Cost Integration Tests
+
+func TestProvider_Generate_ReturnsCost(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := apiResponse{
+			Created: time.Now().Unix(),
+			Data: []imageData{
+				{B64JSON: base64.StdEncoding.EncodeToString([]byte("test"))},
+			},
+		}
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	cfg := &provider.Config{APIKey: "test-key", BaseURL: server.URL}
+	p, _ := New(cfg, models.DefaultRegistry())
+
+	req := &models.Request{
+		Model:   "gpt-image-1",
+		Prompt:  "test prompt",
+		Count:   1,
+		Size:    "1024x1024",
+		Quality: "medium",
+	}
+
+	resp, err := p.Generate(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+
+	if resp.Cost == nil {
+		t.Fatal("Generate() should return cost information")
+	}
+	if resp.Cost.Total <= 0 {
+		t.Errorf("Generate() cost.Total = %f, want > 0", resp.Cost.Total)
+	}
+	if resp.Cost.PerImage <= 0 {
+		t.Errorf("Generate() cost.PerImage = %f, want > 0", resp.Cost.PerImage)
+	}
+	if resp.Cost.Currency != "USD" {
+		t.Errorf("Generate() cost.Currency = %s, want USD", resp.Cost.Currency)
+	}
+}
+
+func TestProvider_Generate_Cost_GPTImage1_Medium(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := apiResponse{
+			Data: []imageData{
+				{B64JSON: base64.StdEncoding.EncodeToString([]byte("img"))},
+			},
+		}
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	cfg := &provider.Config{APIKey: "test-key", BaseURL: server.URL}
+	p, _ := New(cfg, models.DefaultRegistry())
+
+	req := &models.Request{
+		Model:   "gpt-image-1",
+		Prompt:  "test",
+		Count:   1,
+		Size:    "1024x1024",
+		Quality: "medium",
+	}
+
+	resp, err := p.Generate(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+
+	// Medium quality 1024x1024 should cost $0.042
+	expectedCost := 0.042
+	if !floatEquals(resp.Cost.PerImage, expectedCost) {
+		t.Errorf("Generate() cost.PerImage = %f, want %f", resp.Cost.PerImage, expectedCost)
+	}
+}
+
+func TestProvider_Generate_Cost_GPTImage1_High(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := apiResponse{
+			Data: []imageData{
+				{B64JSON: base64.StdEncoding.EncodeToString([]byte("img"))},
+			},
+		}
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	cfg := &provider.Config{APIKey: "test-key", BaseURL: server.URL}
+	p, _ := New(cfg, models.DefaultRegistry())
+
+	req := &models.Request{
+		Model:   "gpt-image-1",
+		Prompt:  "test",
+		Count:   1,
+		Size:    "1024x1024",
+		Quality: "high",
+	}
+
+	resp, err := p.Generate(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+
+	// High quality 1024x1024 should cost $0.167
+	expectedCost := 0.167
+	if !floatEquals(resp.Cost.PerImage, expectedCost) {
+		t.Errorf("Generate() cost.PerImage = %f, want %f", resp.Cost.PerImage, expectedCost)
+	}
+}
+
+func TestProvider_Generate_Cost_GPTImage1_Low(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := apiResponse{
+			Data: []imageData{
+				{B64JSON: base64.StdEncoding.EncodeToString([]byte("img"))},
+			},
+		}
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	cfg := &provider.Config{APIKey: "test-key", BaseURL: server.URL}
+	p, _ := New(cfg, models.DefaultRegistry())
+
+	req := &models.Request{
+		Model:   "gpt-image-1",
+		Prompt:  "test",
+		Count:   1,
+		Size:    "1024x1024",
+		Quality: "low",
+	}
+
+	resp, err := p.Generate(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+
+	// Low quality 1024x1024 should cost $0.011
+	expectedCost := 0.011
+	if !floatEquals(resp.Cost.PerImage, expectedCost) {
+		t.Errorf("Generate() cost.PerImage = %f, want %f", resp.Cost.PerImage, expectedCost)
+	}
+}
+
+func TestProvider_Generate_Cost_GPTImage1_LargeSize(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := apiResponse{
+			Data: []imageData{
+				{B64JSON: base64.StdEncoding.EncodeToString([]byte("img"))},
+			},
+		}
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	cfg := &provider.Config{APIKey: "test-key", BaseURL: server.URL}
+	p, _ := New(cfg, models.DefaultRegistry())
+
+	req := &models.Request{
+		Model:   "gpt-image-1",
+		Prompt:  "test",
+		Count:   1,
+		Size:    "1536x1024",
+		Quality: "high",
+	}
+
+	resp, err := p.Generate(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+
+	// High quality 1536x1024 should cost $0.250
+	expectedCost := 0.250
+	if !floatEquals(resp.Cost.PerImage, expectedCost) {
+		t.Errorf("Generate() cost.PerImage = %f, want %f", resp.Cost.PerImage, expectedCost)
+	}
+}
+
+func TestProvider_Generate_Cost_DallE3_Standard(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := apiResponse{
+			Data: []imageData{
+				{URL: "https://example.com/image.png"},
+			},
+		}
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	cfg := &provider.Config{APIKey: "test-key", BaseURL: server.URL}
+	p, _ := New(cfg, models.DefaultRegistry())
+
+	req := &models.Request{
+		Model:   "dall-e-3",
+		Prompt:  "test",
+		Count:   1,
+		Size:    "1024x1024",
+		Quality: "standard",
+	}
+
+	resp, err := p.Generate(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+
+	// DALL-E 3 standard 1024x1024 should cost $0.040
+	expectedCost := 0.040
+	if !floatEquals(resp.Cost.PerImage, expectedCost) {
+		t.Errorf("Generate() cost.PerImage = %f, want %f", resp.Cost.PerImage, expectedCost)
+	}
+}
+
+func TestProvider_Generate_Cost_DallE3_HD(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := apiResponse{
+			Data: []imageData{
+				{URL: "https://example.com/image.png"},
+			},
+		}
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	cfg := &provider.Config{APIKey: "test-key", BaseURL: server.URL}
+	p, _ := New(cfg, models.DefaultRegistry())
+
+	req := &models.Request{
+		Model:   "dall-e-3",
+		Prompt:  "test",
+		Count:   1,
+		Size:    "1024x1024",
+		Quality: "hd",
+	}
+
+	resp, err := p.Generate(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+
+	// DALL-E 3 hd 1024x1024 should cost $0.080
+	expectedCost := 0.080
+	if !floatEquals(resp.Cost.PerImage, expectedCost) {
+		t.Errorf("Generate() cost.PerImage = %f, want %f", resp.Cost.PerImage, expectedCost)
+	}
+}
+
+func TestProvider_Generate_Cost_DallE2(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := apiResponse{
+			Data: []imageData{
+				{URL: "https://example.com/image.png"},
+			},
+		}
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	cfg := &provider.Config{APIKey: "test-key", BaseURL: server.URL}
+	p, _ := New(cfg, models.DefaultRegistry())
+
+	req := &models.Request{
+		Model:  "dall-e-2",
+		Prompt: "test",
+		Count:  1,
+		Size:   "512x512",
+	}
+
+	resp, err := p.Generate(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+
+	// DALL-E 2 512x512 should cost $0.018
+	expectedCost := 0.018
+	if !floatEquals(resp.Cost.PerImage, expectedCost) {
+		t.Errorf("Generate() cost.PerImage = %f, want %f", resp.Cost.PerImage, expectedCost)
+	}
+}
+
+func TestProvider_Generate_Cost_MultipleImages(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := apiResponse{
+			Data: []imageData{
+				{B64JSON: base64.StdEncoding.EncodeToString([]byte("img1"))},
+				{B64JSON: base64.StdEncoding.EncodeToString([]byte("img2"))},
+				{B64JSON: base64.StdEncoding.EncodeToString([]byte("img3"))},
+			},
+		}
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	cfg := &provider.Config{APIKey: "test-key", BaseURL: server.URL}
+	p, _ := New(cfg, models.DefaultRegistry())
+
+	req := &models.Request{
+		Model:   "gpt-image-1",
+		Prompt:  "test",
+		Count:   3,
+		Size:    "1024x1024",
+		Quality: "low",
+	}
+
+	resp, err := p.Generate(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+
+	// 3 images at $0.011 each = $0.033
+	expectedPerImage := 0.011
+	expectedTotal := 0.033
+	if !floatEquals(resp.Cost.PerImage, expectedPerImage) {
+		t.Errorf("Generate() cost.PerImage = %f, want %f", resp.Cost.PerImage, expectedPerImage)
+	}
+	if !floatEquals(resp.Cost.Total, expectedTotal) {
+		t.Errorf("Generate() cost.Total = %f, want %f", resp.Cost.Total, expectedTotal)
+	}
+}
+
+func TestProvider_Edit_ReturnsCost(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := apiResponse{
+			Data: []imageData{
+				{B64JSON: base64.StdEncoding.EncodeToString([]byte("edited"))},
+			},
+		}
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	cfg := &provider.Config{APIKey: "test-key", BaseURL: server.URL}
+	p, _ := New(cfg, models.DefaultRegistry())
+
+	req := &models.EditRequest{
+		Model:  "gpt-image-1",
+		Prompt: "edit this",
+		Image:  []byte("fake image"),
+		Size:   "1024x1024",
+	}
+
+	resp, err := p.Edit(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Edit() error = %v", err)
+	}
+
+	if resp.Cost == nil {
+		t.Fatal("Edit() should return cost information")
+	}
+	if resp.Cost.Total <= 0 {
+		t.Errorf("Edit() cost.Total = %f, want > 0", resp.Cost.Total)
+	}
+	if resp.Cost.Currency != "USD" {
+		t.Errorf("Edit() cost.Currency = %s, want USD", resp.Cost.Currency)
+	}
+}
+
+func TestProvider_Edit_Cost_GPTImage1(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := apiResponse{
+			Data: []imageData{
+				{B64JSON: base64.StdEncoding.EncodeToString([]byte("edited"))},
+			},
+		}
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	cfg := &provider.Config{APIKey: "test-key", BaseURL: server.URL}
+	p, _ := New(cfg, models.DefaultRegistry())
+
+	req := &models.EditRequest{
+		Model:  "gpt-image-1",
+		Prompt: "edit",
+		Image:  []byte("image"),
+		Size:   "1024x1024",
+	}
+
+	resp, err := p.Edit(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Edit() error = %v", err)
+	}
+
+	// Edit uses medium quality, 1024x1024 = $0.042
+	expectedCost := 0.042
+	if !floatEquals(resp.Cost.PerImage, expectedCost) {
+		t.Errorf("Edit() cost.PerImage = %f, want %f", resp.Cost.PerImage, expectedCost)
+	}
+}
+
+func TestProvider_Edit_Cost_DallE2(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := apiResponse{
+			Data: []imageData{
+				{URL: "https://example.com/edited.png"},
+			},
+		}
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	cfg := &provider.Config{APIKey: "test-key", BaseURL: server.URL}
+	p, _ := New(cfg, models.DefaultRegistry())
+
+	req := &models.EditRequest{
+		Model:  "dall-e-2",
+		Prompt: "edit",
+		Image:  []byte("image"),
+		Size:   "512x512",
+	}
+
+	resp, err := p.Edit(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Edit() error = %v", err)
+	}
+
+	// DALL-E 2 512x512 = $0.018
+	expectedCost := 0.018
+	if !floatEquals(resp.Cost.PerImage, expectedCost) {
+		t.Errorf("Edit() cost.PerImage = %f, want %f", resp.Cost.PerImage, expectedCost)
+	}
+}
+
+func TestProvider_NewHasCostCalculator(t *testing.T) {
+	cfg := &provider.Config{APIKey: "test-key"}
+	p, err := New(cfg, models.DefaultRegistry())
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	if p.costCalc == nil {
+		t.Error("New() should initialize cost calculator")
+	}
+}
+
+func floatEquals(a, b float64) bool {
+	const epsilon = 0.0001
+	return (a-b) < epsilon && (b-a) < epsilon
+}

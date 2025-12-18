@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -187,6 +188,24 @@ func runGenerate(_ *cobra.Command, args []string, app *App) error {
 	if resp.Cost != nil {
 		fmt.Fprintf(app.Out, "Cost: $%.4f (%d image(s) @ $%.4f each)\n",
 			resp.Cost.Total, len(resp.Images), resp.Cost.PerImage)
+
+		// Log cost to database (empty strings for iteration/session as CLI mode doesn't have sessions)
+		store, err := session.NewStore()
+		if err == nil {
+			defer store.Close()
+			costEntry := &session.CostEntry{
+				IterationID: "",
+				SessionID:   "",
+				Provider:    string(prov.Name()),
+				Model:       req.Model,
+				Cost:        resp.Cost.Total,
+				ImageCount:  len(resp.Images),
+				Timestamp:   time.Now(),
+			}
+			if logErr := store.LogCost(ctx, costEntry); logErr != nil {
+				fmt.Fprintf(app.Err, "Warning: failed to log cost: %v\n", logErr)
+			}
+		}
 	}
 
 	if flagShow {
