@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/manash/imggen/internal/cost"
 	"github.com/manash/imggen/internal/provider"
 	"github.com/manash/imggen/pkg/models"
 )
@@ -57,6 +58,7 @@ type Provider struct {
 	httpClient *http.Client
 	registry   *models.ModelRegistry
 	verbose    bool
+	costCalc   *cost.Calculator
 }
 
 func New(cfg *provider.Config, registry *models.ModelRegistry) (*Provider, error) {
@@ -82,6 +84,7 @@ func New(cfg *provider.Config, registry *models.ModelRegistry) (*Provider, error
 		},
 		registry: registry,
 		verbose:  cfg.Verbose,
+		costCalc: cost.NewCalculator(),
 	}, nil
 }
 
@@ -146,7 +149,13 @@ func (p *Provider) Generate(ctx context.Context, req *models.Request) (*models.R
 		return nil, fmt.Errorf("%w: status %d", provider.ErrGenerationFailed, resp.StatusCode)
 	}
 
-	return p.buildResponse(apiResp)
+	response, err := p.buildResponse(apiResp)
+	if err != nil {
+		return nil, err
+	}
+
+	response.Cost = p.costCalc.Calculate(models.ProviderOpenAI, req.Model, req.Size, req.Quality, len(response.Images))
+	return response, nil
 }
 
 func (p *Provider) buildAPIRequest(req *models.Request) *apiRequest {

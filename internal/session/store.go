@@ -35,9 +35,25 @@ CREATE TABLE IF NOT EXISTS iterations (
     FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS cost_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    iteration_id TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    model TEXT NOT NULL,
+    cost REAL NOT NULL,
+    image_count INTEGER NOT NULL DEFAULT 1,
+    timestamp DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (iteration_id) REFERENCES iterations(id) ON DELETE CASCADE,
+    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+);
+
 CREATE INDEX IF NOT EXISTS idx_iterations_session_id ON iterations(session_id);
 CREATE INDEX IF NOT EXISTS idx_iterations_parent_id ON iterations(parent_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_updated_at ON sessions(updated_at);
+CREATE INDEX IF NOT EXISTS idx_cost_log_timestamp ON cost_log(timestamp);
+CREATE INDEX IF NOT EXISTS idx_cost_log_provider ON cost_log(provider);
+CREATE INDEX IF NOT EXISTS idx_cost_log_session_id ON cost_log(session_id);
 `
 
 type Store struct {
@@ -244,4 +260,93 @@ func EnsureImageDir(sessionID string) (string, error) {
 
 func FormatTimestamp(t time.Time) string {
 	return t.Format("2006-01-02 15:04:05")
+}
+
+type CostEntry struct {
+	IterationID string
+	SessionID   string
+	Provider    string
+	Model       string
+	Cost        float64
+	ImageCount  int
+	Timestamp   time.Time
+}
+
+type CostSummary struct {
+	TotalCost   float64
+	ImageCount  int
+	EntryCount  int
+}
+
+type ProviderCostSummary struct {
+	Provider   string
+	TotalCost  float64
+	ImageCount int
+}
+
+func (s *Store) LogCost(ctx context.Context, entry *CostEntry) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO cost_log (iteration_id, session_id, provider, model, cost, image_count, timestamp)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		entry.IterationID, entry.SessionID, entry.Provider, entry.Model,
+		entry.Cost, entry.ImageCount, entry.Timestamp)
+	return err
+}
+
+func (s *Store) GetCostByDateRange(ctx context.Context, start, end time.Time) (*CostSummary, error) {
+	row := s.db.QueryRowContext(ctx,
+		`SELECT COALESCE(SUM(cost), 0), COALESCE(SUM(image_count), 0), COUNT(*)
+		 FROM cost_log WHERE timestamp >= ? AND timestamp < ?`,
+		start, end)
+
+	var summary CostSummary
+	if err := row.Scan(&summary.TotalCost, &summary.ImageCount, &summary.EntryCount); err != nil {
+		return nil, err
+	}
+	return &summary, nil
+}
+
+func (s *Store) GetCostByProvider(ctx context.Context) ([]ProviderCostSummary, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT provider, COALESCE(SUM(cost), 0), COALESCE(SUM(image_count), 0)
+		 FROM cost_log GROUP BY provider ORDER BY provider`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var summaries []ProviderCostSummary
+	for rows.Next() {
+		var ps ProviderCostSummary
+		if err := rows.Scan(&ps.Provider, &ps.TotalCost, &ps.ImageCount); err != nil {
+			return nil, err
+		}
+		summaries = append(summaries, ps)
+	}
+	return summaries, rows.Err()
+}
+
+func (s *Store) GetTotalCost(ctx context.Context) (*CostSummary, error) {
+	row := s.db.QueryRowContext(ctx,
+		`SELECT COALESCE(SUM(cost), 0), COALESCE(SUM(image_count), 0), COUNT(*)
+		 FROM cost_log`)
+
+	var summary CostSummary
+	if err := row.Scan(&summary.TotalCost, &summary.ImageCount, &summary.EntryCount); err != nil {
+		return nil, err
+	}
+	return &summary, nil
+}
+
+func (s *Store) GetSessionCost(ctx context.Context, sessionID string) (*CostSummary, error) {
+	row := s.db.QueryRowContext(ctx,
+		`SELECT COALESCE(SUM(cost), 0), COALESCE(SUM(image_count), 0), COUNT(*)
+		 FROM cost_log WHERE session_id = ?`,
+		sessionID)
+
+	var summary CostSummary
+	if err := row.Scan(&summary.TotalCost, &summary.ImageCount, &summary.EntryCount); err != nil {
+		return nil, err
+	}
+	return &summary, nil
 }

@@ -216,3 +216,26 @@ func (m *Manager) IterationCount(ctx context.Context) (int, error) {
 	}
 	return m.store.CountIterations(ctx, m.current.ID)
 }
+
+func (m *Manager) LogCost(ctx context.Context, entry *CostEntry) error {
+	return m.store.LogCost(ctx, entry)
+}
+
+func (m *Manager) GetCostByDateRange(ctx context.Context, start, end time.Time) (*CostSummary, error) {
+	return m.store.GetCostByDateRange(ctx, start, end)
+}
+
+func (m *Manager) GetCostByProvider(ctx context.Context) ([]ProviderCostSummary, error) {
+	return m.store.GetCostByProvider(ctx)
+}
+
+func (m *Manager) GetTotalCost(ctx context.Context) (*CostSummary, error) {
+	return m.store.GetTotalCost(ctx)
+}
+
+func (m *Manager) GetSessionCost(ctx context.Context) (*CostSummary, error) {
+	if m.current == nil {
+		return &CostSummary{}, nil
+	}
+	return m.store.GetSessionCost(ctx, m.current.ID)
+}

@@ -94,9 +94,16 @@ func (r *EditRequest) Validate() error {
 	return nil
 }
 
+type CostInfo struct {
+	PerImage float64 `json:"per_image"`
+	Total    float64 `json:"total"`
+	Currency string  `json:"currency"`
+}
+
 type Response struct {
 	Images        []GeneratedImage
 	RevisedPrompt string
+	Cost          *CostInfo
 }
 
 type GeneratedImage struct {

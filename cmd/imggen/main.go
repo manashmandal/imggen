@@ -184,6 +184,11 @@ func runGenerate(_ *cobra.Command, args []string, app *App) error {
 		fmt.Fprintf(app.Out, "Saved: %s\n", path)
 	}
 
+	if resp.Cost != nil {
+		fmt.Fprintf(app.Out, "Cost: $%.4f (%d image(s) @ $%.4f each)\n",
+			resp.Cost.Total, len(resp.Images), resp.Cost.PerImage)
+	}
+
 	if flagShow {
 		if !display.IsTerminalSupported() {
 			fmt.Fprintln(app.Err, "Warning: terminal may not support Kitty graphics protocol")

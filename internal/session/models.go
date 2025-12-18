@@ -28,10 +28,12 @@ type Iteration struct {
 }
 
 type IterationMetadata struct {
-	Size        string `json:"size,omitempty"`
-	Quality     string `json:"quality,omitempty"`
-	Format      string `json:"format,omitempty"`
-	Transparent bool   `json:"transparent,omitempty"`
+	Size        string  `json:"size,omitempty"`
+	Quality     string  `json:"quality,omitempty"`
+	Format      string  `json:"format,omitempty"`
+	Transparent bool    `json:"transparent,omitempty"`
+	Cost        float64 `json:"cost,omitempty"`
+	Provider    string  `json:"provider,omitempty"`
 }
 
 func (m *IterationMetadata) ToJSON() string {

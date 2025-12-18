@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/manash/imggen/internal/session"
 	"github.com/manash/imggen/pkg/models"
@@ -29,6 +30,7 @@ func (r *REPL) registerCommands() {
 		&HistoryCommand{},
 		&SessionCommand{},
 		&ModelCommand{},
+		&CostCommand{},
 		&HelpCommand{},
 		&QuitCommand{},
 	}
@@ -79,6 +81,11 @@ func (c *GenerateCommand) Execute(ctx context.Context, r *REPL, args []string) e
 		return fmt.Errorf("failed to save image: %w", err)
 	}
 
+	var costValue float64
+	if resp.Cost != nil {
+		costValue = resp.Cost.Total
+	}
+
 	iter := &session.Iteration{
 		Operation:     "generate",
 		Prompt:        prompt,
@@ -86,13 +93,31 @@ func (c *GenerateCommand) Execute(ctx context.Context, r *REPL, args []string) e
 		Model:         req.Model,
 		ImagePath:     paths[0],
 		Metadata: session.IterationMetadata{
-			Size:    req.Size,
-			Quality: req.Quality,
-			Format:  req.Format.String(),
+			Size:     req.Size,
+			Quality:  req.Quality,
+			Format:   req.Format.String(),
+			Cost:     costValue,
+			Provider: string(r.provider.Name()),
 		},
 	}
 	if err := r.sessionMgr.AddIteration(ctx, iter); err != nil {
 		return fmt.Errorf("failed to save iteration: %w", err)
+	}
+
+	// Log cost to database
+	if resp.Cost != nil && resp.Cost.Total > 0 {
+		costEntry := &session.CostEntry{
+			IterationID: iter.ID,
+			SessionID:   r.sessionMgr.Current().ID,
+			Provider:    string(r.provider.Name()),
+			Model:       req.Model,
+			Cost:        resp.Cost.Total,
+			ImageCount:  len(resp.Images),
+			Timestamp:   iter.Timestamp,
+		}
+		if err := r.sessionMgr.LogCost(ctx, costEntry); err != nil {
+			fmt.Fprintf(r.err, "Warning: failed to log cost: %v\n", err)
+		}
 	}
 
 	if err := r.displayer.Display(ctx, &resp.Images[0]); err != nil {
@@ -100,6 +125,10 @@ func (c *GenerateCommand) Execute(ctx context.Context, r *REPL, args []string) e
 	}
 
 	fmt.Fprintf(r.out, "Saved: %s\n", paths[0])
+	if resp.Cost != nil {
+		fmt.Fprintf(r.out, "Cost: $%.4f (%d image(s) @ $%.4f each)\n",
+			resp.Cost.Total, len(resp.Images), resp.Cost.PerImage)
+	}
 	if resp.RevisedPrompt != "" {
 		fmt.Fprintf(r.out, "Revised prompt: %s\n", resp.RevisedPrompt)
 	}
@@ -160,6 +189,11 @@ func (c *EditCommand) Execute(ctx context.Context, r *REPL, args []string) error
 		return fmt.Errorf("failed to save image: %w", err)
 	}
 
+	var costValue float64
+	if resp.Cost != nil {
+		costValue = resp.Cost.Total
+	}
+
 	iter := &session.Iteration{
 		Operation:     "edit",
 		Prompt:        prompt,
@@ -167,12 +201,30 @@ func (c *EditCommand) Execute(ctx context.Context, r *REPL, args []string) error
 		Model:         req.Model,
 		ImagePath:     paths[0],
 		Metadata: session.IterationMetadata{
-			Size:   req.Size,
-			Format: req.Format.String(),
+			Size:     req.Size,
+			Format:   req.Format.String(),
+			Cost:     costValue,
+			Provider: string(r.provider.Name()),
 		},
 	}
 	if err := r.sessionMgr.AddIteration(ctx, iter); err != nil {
 		return fmt.Errorf("failed to save iteration: %w", err)
+	}
+
+	// Log cost to database
+	if resp.Cost != nil && resp.Cost.Total > 0 {
+		costEntry := &session.CostEntry{
+			IterationID: iter.ID,
+			SessionID:   r.sessionMgr.Current().ID,
+			Provider:    string(r.provider.Name()),
+			Model:       req.Model,
+			Cost:        resp.Cost.Total,
+			ImageCount:  len(resp.Images),
+			Timestamp:   iter.Timestamp,
+		}
+		if err := r.sessionMgr.LogCost(ctx, costEntry); err != nil {
+			fmt.Fprintf(r.err, "Warning: failed to log cost: %v\n", err)
+		}
 	}
 
 	if err := r.displayer.Display(ctx, &resp.Images[0]); err != nil {
@@ -180,6 +232,10 @@ func (c *EditCommand) Execute(ctx context.Context, r *REPL, args []string) error
 	}
 
 	fmt.Fprintf(r.out, "Saved: %s\n", paths[0])
+	if resp.Cost != nil {
+		fmt.Fprintf(r.out, "Cost: $%.4f (%d image(s) @ $%.4f each)\n",
+			resp.Cost.Total, len(resp.Images), resp.Cost.PerImage)
+	}
 	if resp.RevisedPrompt != "" {
 		fmt.Fprintf(r.out, "Revised prompt: %s\n", resp.RevisedPrompt)
 	}
@@ -489,6 +545,158 @@ func (c *ModelCommand) Execute(_ context.Context, r *REPL, args []string) error 
 	return nil
 }
 
+// CostCommand displays cost information
+type CostCommand struct{}
+
+func (c *CostCommand) Name() string        { return "cost" }
+func (c *CostCommand) Aliases() []string   { return []string{"$"} }
+func (c *CostCommand) Description() string { return "View cost summary (today, week, month, total, provider, session)" }
+func (c *CostCommand) Usage() string       { return "cost <today|week|month|total|provider|session>" }
+
+func (c *CostCommand) Execute(ctx context.Context, r *REPL, args []string) error {
+	if len(args) == 0 {
+		return c.showTotal(ctx, r)
+	}
+
+	subCmd := strings.ToLower(args[0])
+	switch subCmd {
+	case "today":
+		return c.showToday(ctx, r)
+	case "week":
+		return c.showWeek(ctx, r)
+	case "month":
+		return c.showMonth(ctx, r)
+	case "total":
+		return c.showTotal(ctx, r)
+	case "provider":
+		return c.showByProvider(ctx, r)
+	case "session":
+		return c.showSession(ctx, r)
+	default:
+		return fmt.Errorf("unknown cost command: %s\nUsage: %s", subCmd, c.Usage())
+	}
+}
+
+func (c *CostCommand) showToday(ctx context.Context, r *REPL) error {
+	now := time.Now()
+	start := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	end := start.Add(24 * time.Hour)
+
+	summary, err := r.sessionMgr.GetCostByDateRange(ctx, start, end)
+	if err != nil {
+		return err
+	}
+
+	if summary.EntryCount == 0 {
+		fmt.Fprintln(r.out, "No costs recorded today.")
+		return nil
+	}
+
+	fmt.Fprintf(r.out, "Today's cost: $%.4f (%d image(s))\n", summary.TotalCost, summary.ImageCount)
+	return nil
+}
+
+func (c *CostCommand) showWeek(ctx context.Context, r *REPL) error {
+	now := time.Now()
+	start := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()).Add(-6 * 24 * time.Hour)
+	end := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()).Add(24 * time.Hour)
+
+	summary, err := r.sessionMgr.GetCostByDateRange(ctx, start, end)
+	if err != nil {
+		return err
+	}
+
+	if summary.EntryCount == 0 {
+		fmt.Fprintln(r.out, "No costs recorded in the last 7 days.")
+		return nil
+	}
+
+	fmt.Fprintf(r.out, "Last 7 days cost: $%.4f (%d image(s))\n", summary.TotalCost, summary.ImageCount)
+	return nil
+}
+
+func (c *CostCommand) showMonth(ctx context.Context, r *REPL) error {
+	now := time.Now()
+	start := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()).Add(-29 * 24 * time.Hour)
+	end := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()).Add(24 * time.Hour)
+
+	summary, err := r.sessionMgr.GetCostByDateRange(ctx, start, end)
+	if err != nil {
+		return err
+	}
+
+	if summary.EntryCount == 0 {
+		fmt.Fprintln(r.out, "No costs recorded in the last 30 days.")
+		return nil
+	}
+
+	fmt.Fprintf(r.out, "Last 30 days cost: $%.4f (%d image(s))\n", summary.TotalCost, summary.ImageCount)
+	return nil
+}
+
+func (c *CostCommand) showTotal(ctx context.Context, r *REPL) error {
+	summary, err := r.sessionMgr.GetTotalCost(ctx)
+	if err != nil {
+		return err
+	}
+
+	if summary.EntryCount == 0 {
+		fmt.Fprintln(r.out, "No costs recorded yet.")
+		return nil
+	}
+
+	fmt.Fprintf(r.out, "Total cost: $%.4f (%d image(s))\n", summary.TotalCost, summary.ImageCount)
+	return nil
+}
+
+func (c *CostCommand) showByProvider(ctx context.Context, r *REPL) error {
+	summaries, err := r.sessionMgr.GetCostByProvider(ctx)
+	if err != nil {
+		return err
+	}
+
+	if len(summaries) == 0 {
+		fmt.Fprintln(r.out, "No costs recorded yet.")
+		return nil
+	}
+
+	fmt.Fprintf(r.out, "%-12s  %-8s  %s\n", "Provider", "Images", "Cost")
+	fmt.Fprintln(r.out, strings.Repeat("-", 35))
+
+	var totalCost float64
+	var totalImages int
+	for _, ps := range summaries {
+		fmt.Fprintf(r.out, "%-12s  %-8d  $%.4f\n", ps.Provider, ps.ImageCount, ps.TotalCost)
+		totalCost += ps.TotalCost
+		totalImages += ps.ImageCount
+	}
+
+	fmt.Fprintln(r.out, strings.Repeat("-", 35))
+	fmt.Fprintf(r.out, "%-12s  %-8d  $%.4f\n", "Total", totalImages, totalCost)
+
+	return nil
+}
+
+func (c *CostCommand) showSession(ctx context.Context, r *REPL) error {
+	if !r.sessionMgr.HasSession() {
+		fmt.Fprintln(r.out, "No active session.")
+		return nil
+	}
+
+	summary, err := r.sessionMgr.GetSessionCost(ctx)
+	if err != nil {
+		return err
+	}
+
+	if summary.EntryCount == 0 {
+		fmt.Fprintln(r.out, "No costs in current session.")
+		return nil
+	}
+
+	fmt.Fprintf(r.out, "Session cost: $%.4f (%d image(s))\n", summary.TotalCost, summary.ImageCount)
+	return nil
+}
+
 // HelpCommand shows available commands
 type HelpCommand struct{}
 
@@ -507,6 +715,7 @@ func (c *HelpCommand) Execute(_ context.Context, r *REPL, _ []string) error {
 		&HistoryCommand{},
 		&SessionCommand{},
 		&ModelCommand{},
+		&CostCommand{},
 		&HelpCommand{},
 		&QuitCommand{},
 	}
