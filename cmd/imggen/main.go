@@ -293,8 +293,9 @@ func runGenerate(_ *cobra.Command, args []string, app *App) error {
 	}
 
 	if resp.Cost != nil {
-		fmt.Fprintf(app.Out, "Cost: $%.4f (%d image(s) @ $%.4f each)\n",
-			resp.Cost.Total, len(resp.Images), resp.Cost.PerImage)
+		fmt.Fprintf(app.Out, "Cost: $%.4f (%d image(s) @ $%.4f/image, %s %s %s)\n",
+			resp.Cost.Total, len(resp.Images), resp.Cost.PerImage,
+			req.Model, req.Size, req.Quality)
 
 		// Log cost to database (empty strings for iteration/session as CLI mode doesn't have sessions)
 		store, err := session.NewStore()

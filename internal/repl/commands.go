@@ -126,8 +126,9 @@ func (c *GenerateCommand) Execute(ctx context.Context, r *REPL, args []string) e
 
 	fmt.Fprintf(r.out, "Saved: %s\n", paths[0])
 	if resp.Cost != nil {
-		fmt.Fprintf(r.out, "Cost: $%.4f (%d image(s) @ $%.4f each)\n",
-			resp.Cost.Total, len(resp.Images), resp.Cost.PerImage)
+		fmt.Fprintf(r.out, "Cost: $%.4f (%d image(s) @ $%.4f/image, %s %s %s)\n",
+			resp.Cost.Total, len(resp.Images), resp.Cost.PerImage,
+			req.Model, req.Size, req.Quality)
 	}
 	if resp.RevisedPrompt != "" {
 		fmt.Fprintf(r.out, "Revised prompt: %s\n", resp.RevisedPrompt)
@@ -233,8 +234,20 @@ func (c *EditCommand) Execute(ctx context.Context, r *REPL, args []string) error
 
 	fmt.Fprintf(r.out, "Saved: %s\n", paths[0])
 	if resp.Cost != nil {
-		fmt.Fprintf(r.out, "Cost: $%.4f (%d image(s) @ $%.4f each)\n",
-			resp.Cost.Total, len(resp.Images), resp.Cost.PerImage)
+		// Edit uses medium quality for gpt-image-1, empty for dall-e-2
+		quality := "medium"
+		if req.Model == "dall-e-2" {
+			quality = ""
+		}
+		if quality != "" {
+			fmt.Fprintf(r.out, "Cost: $%.4f (%d image(s) @ $%.4f/image, %s %s %s)\n",
+				resp.Cost.Total, len(resp.Images), resp.Cost.PerImage,
+				req.Model, req.Size, quality)
+		} else {
+			fmt.Fprintf(r.out, "Cost: $%.4f (%d image(s) @ $%.4f/image, %s %s)\n",
+				resp.Cost.Total, len(resp.Images), resp.Cost.PerImage,
+				req.Model, req.Size)
+		}
 	}
 	if resp.RevisedPrompt != "" {
 		fmt.Fprintf(r.out, "Revised prompt: %s\n", resp.RevisedPrompt)
