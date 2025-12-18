@@ -46,6 +46,12 @@ var openAIPricing = map[PricingKey]float64{
 }
 
 func GetOpenAIPrice(model, size, quality string) (float64, bool) {
+	// First check cached/custom prices
+	if price, ok := GetCachedPrice(model, size, quality); ok {
+		return price, true
+	}
+
+	// Fall back to built-in prices
 	key := PricingKey{Model: model, Size: size, Quality: quality}
 	price, ok := openAIPricing[key]
 	return price, ok

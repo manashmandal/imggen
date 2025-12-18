@@ -12,6 +12,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/manash/imggen/internal/cost"
 	"github.com/manash/imggen/internal/display"
 	"github.com/manash/imggen/internal/image"
 	"github.com/manash/imggen/internal/provider"
@@ -123,6 +124,7 @@ Examples:
 
 	cmd.AddCommand(newCostCmd(app))
 	cmd.AddCommand(newDBCmd(app))
+	cmd.AddCommand(newPriceCmd(app))
 
 	return cmd
 }
@@ -509,4 +511,150 @@ var getDBPath = func() (string, error) {
 		return "", fmt.Errorf("failed to get home directory: %w", err)
 	}
 	return filepath.Join(homeDir, ".imggen", "sessions.db"), nil
+}
+
+func newPriceCmd(app *App) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "price",
+		Short: "Manage pricing data",
+		Long: `Manage pricing data used for cost calculations.
+
+Custom prices override built-in defaults and are stored in ~/.imggen/pricing.json`,
+	}
+
+	showCmd := &cobra.Command{
+		Use:   "show",
+		Short: "Show current pricing",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runPriceShow(app)
+		},
+	}
+
+	setCmd := &cobra.Command{
+		Use:   "set <model> <size> <quality> <price>",
+		Short: "Set a custom price",
+		Long: `Set a custom price for a specific model/size/quality combination.
+
+Examples:
+  imggen price set gpt-image-1 1024x1024 low 0.011
+  imggen price set dall-e-3 1024x1024 standard 0.040
+  imggen price set dall-e-2 1024x1024 "" 0.020  # no quality for dall-e-2`,
+		Args: cobra.ExactArgs(4),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runPriceSet(app, args)
+		},
+	}
+
+	resetCmd := &cobra.Command{
+		Use:   "reset",
+		Short: "Reset to built-in pricing",
+		Long:  `Remove custom pricing and revert to built-in defaults.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runPriceReset(app)
+		},
+	}
+
+	cmd.AddCommand(showCmd)
+	cmd.AddCommand(setCmd)
+	cmd.AddCommand(resetCmd)
+
+	return cmd
+}
+
+func runPriceSet(app *App, args []string) error {
+	model := args[0]
+	size := args[1]
+	quality := args[2]
+
+	var price float64
+	if _, err := fmt.Sscanf(args[3], "%f", &price); err != nil {
+		return fmt.Errorf("invalid price %q: must be a number", args[3])
+	}
+
+	if price <= 0 {
+		return fmt.Errorf("price must be positive")
+	}
+
+	if err := cost.SetPrice(model, size, quality, price); err != nil {
+		return fmt.Errorf("failed to set price: %w", err)
+	}
+
+	if quality != "" {
+		fmt.Fprintf(app.Out, "Price set: %s %s %s = $%.4f\n", model, size, quality, price)
+	} else {
+		fmt.Fprintf(app.Out, "Price set: %s %s = $%.4f\n", model, size, price)
+	}
+	return nil
+}
+
+func runPriceReset(app *App) error {
+	if err := cost.DeletePricing(); err != nil {
+		return fmt.Errorf("failed to reset pricing: %w", err)
+	}
+	fmt.Fprintln(app.Out, "Custom pricing removed. Using built-in defaults.")
+	return nil
+}
+
+func runPriceShow(app *App) error {
+	pricing, err := cost.LoadPricing()
+	if err != nil {
+		return fmt.Errorf("failed to load pricing: %w", err)
+	}
+
+	if pricing == nil {
+		fmt.Fprintln(app.Out, "Using built-in defaults (no custom pricing set)")
+		fmt.Fprintln(app.Out)
+		showBuiltinPricing(app)
+		fmt.Fprintln(app.Out)
+		fmt.Fprintln(app.Out, "To customize prices, use: imggen price set <model> <size> <quality> <price>")
+		return nil
+	}
+
+	cachePath, _ := cost.PricingCachePath()
+	fmt.Fprintf(app.Out, "Custom pricing (updated: %s)\n", pricing.UpdatedAt.Format("2006-01-02 15:04:05"))
+	fmt.Fprintf(app.Out, "Config: %s\n\n", cachePath)
+
+	for model, prices := range pricing.Image {
+		fmt.Fprintf(app.Out, "%s:\n", model)
+		for key, price := range prices {
+			quality, size := cost.ParsePricingKey(key)
+			if quality != "" {
+				fmt.Fprintf(app.Out, "  %s %s: $%.4f\n", size, quality, price)
+			} else {
+				fmt.Fprintf(app.Out, "  %s: $%.4f\n", size, price)
+			}
+		}
+		fmt.Fprintln(app.Out)
+	}
+
+	fmt.Fprintln(app.Out, "Note: Custom prices override built-in defaults for matching configurations.")
+	fmt.Fprintln(app.Out, "Run 'imggen price reset' to remove custom pricing.")
+
+	return nil
+}
+
+func showBuiltinPricing(app *App) {
+	fmt.Fprintln(app.Out, "Built-in pricing (from https://openai.com/api/pricing):")
+	fmt.Fprintln(app.Out)
+
+	fmt.Fprintln(app.Out, "gpt-image-1:")
+	fmt.Fprintln(app.Out, "  1024x1024 low: $0.0110")
+	fmt.Fprintln(app.Out, "  1024x1024 medium: $0.0420")
+	fmt.Fprintln(app.Out, "  1024x1024 high: $0.1670")
+	fmt.Fprintln(app.Out, "  1536x1024 low: $0.0160")
+	fmt.Fprintln(app.Out, "  1536x1024 medium: $0.0630")
+	fmt.Fprintln(app.Out, "  1536x1024 high: $0.2500")
+	fmt.Fprintln(app.Out)
+
+	fmt.Fprintln(app.Out, "dall-e-3:")
+	fmt.Fprintln(app.Out, "  1024x1024 standard: $0.0400")
+	fmt.Fprintln(app.Out, "  1024x1024 hd: $0.0800")
+	fmt.Fprintln(app.Out, "  1792x1024 standard: $0.0800")
+	fmt.Fprintln(app.Out, "  1792x1024 hd: $0.1200")
+	fmt.Fprintln(app.Out)
+
+	fmt.Fprintln(app.Out, "dall-e-2:")
+	fmt.Fprintln(app.Out, "  1024x1024: $0.0200")
+	fmt.Fprintln(app.Out, "  512x512: $0.0180")
+	fmt.Fprintln(app.Out, "  256x256: $0.0160")
 }
