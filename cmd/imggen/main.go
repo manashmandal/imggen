@@ -36,6 +36,7 @@ var (
 	flagAPIKey      string
 	flagShow        bool
 	flagInteractive bool
+	flagVerbose     bool
 )
 
 type App struct {
@@ -116,6 +117,7 @@ Examples:
 	cmd.Flags().StringVar(&flagAPIKey, "api-key", "", "API key (defaults to OPENAI_API_KEY)")
 	cmd.Flags().BoolVarP(&flagShow, "show", "S", false, "display image in terminal (Kitty graphics protocol)")
 	cmd.Flags().BoolVarP(&flagInteractive, "interactive", "i", false, "start interactive editing mode")
+	cmd.Flags().BoolVarP(&flagVerbose, "verbose", "v", false, "log HTTP requests and responses (API keys redacted)")
 
 	return cmd
 }
@@ -159,7 +161,7 @@ func runGenerate(_ *cobra.Command, args []string, app *App) error {
 		return fmt.Errorf("invalid request: %w", err)
 	}
 
-	providerCfg := &provider.Config{APIKey: apiKey}
+	providerCfg := &provider.Config{APIKey: apiKey, Verbose: flagVerbose}
 	prov, err := app.NewProvider(providerCfg, app.Registry)
 	if err != nil {
 		return fmt.Errorf("failed to create provider: %w", err)
@@ -212,7 +214,7 @@ func runInteractive(_ *cobra.Command, app *App) error {
 		return fmt.Errorf("API key required: set OPENAI_API_KEY or use --api-key")
 	}
 
-	prov, err := app.NewProvider(&provider.Config{APIKey: apiKey}, app.Registry)
+	prov, err := app.NewProvider(&provider.Config{APIKey: apiKey, Verbose: flagVerbose}, app.Registry)
 	if err != nil {
 		return fmt.Errorf("failed to create provider: %w", err)
 	}

@@ -86,13 +86,16 @@ func (p *Provider) Edit(ctx context.Context, req *models.EditRequest) (*models.R
 		return nil, fmt.Errorf("failed to close multipart writer: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, p.baseURL+"/images/edits", body)
+	url := p.baseURL + "/images/edits"
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
 	httpReq.Header.Set("Content-Type", writer.FormDataContentType())
 	httpReq.Header.Set("Authorization", "Bearer "+p.apiKey)
+
+	p.logMultipartRequest(http.MethodPost, url, httpReq.Header, req)
 
 	resp, err := p.httpClient.Do(httpReq)
 	if err != nil {
@@ -104,6 +107,8 @@ func (p *Provider) Edit(ctx context.Context, req *models.EditRequest) (*models.R
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
+
+	p.logResponse(resp.StatusCode, resp.Header, bodyBytes)
 
 	var apiResp apiResponse
 	if err := json.Unmarshal(bodyBytes, &apiResp); err != nil {
