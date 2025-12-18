@@ -76,7 +76,13 @@ release:
     ## Installation
 
     ```bash
-    brew tap manashmandal/tap && brew install imggen
+    brew install manashmandal/tap/imggen
+    ```
+
+    ## Upgrade
+
+    ```bash
+    brew upgrade manashmandal/tap/imggen
     ```
 
     Or download a binary below.
