@@ -71,10 +71,57 @@ imggen [flags] "prompt"
 The tool outputs:
 - Progress message: "Generating N image(s) with MODEL..."
 - Saved filename: "Saved: filename.png"
+- Cost information: "Cost: $X.XXXX (N image(s) @ $X.XXXX each)"
 - Revised prompt (if returned by API): "Revised prompt: ..."
 - Completion message: "Done!"
 
 Generated files are saved to the current working directory with timestamp-based names (e.g., `image-20251216-120000.png`) unless `--output` is specified.
+
+## Cost Tracking
+
+All image generation costs are automatically logged to `~/.imggen/sessions.db`. View costs using the `cost` subcommand:
+
+```bash
+# View total costs
+imggen cost
+
+# View today's costs
+imggen cost today
+
+# View this week's costs (last 7 days)
+imggen cost week
+
+# View this month's costs (last 30 days)
+imggen cost month
+
+# View costs by provider
+imggen cost provider
+```
+
+### Interactive Mode Cost Commands
+
+In interactive mode (`imggen -i`), use the `cost` or `$` command:
+- `cost today` - Today's costs
+- `cost week` - This week's costs
+- `cost month` - This month's costs
+- `cost total` - All-time total
+- `cost provider` - Breakdown by provider
+- `cost session` - Current session's costs
+
+## Database Management
+
+Manage the SQLite database storing sessions and cost data:
+
+```bash
+# Reset database (delete all data)
+imggen db reset
+
+# Reset with backup of old data
+imggen db reset --backup
+
+# Show database location and stats
+imggen db info
+```
 
 ## Examples
 
@@ -119,7 +166,25 @@ Common errors and solutions:
 
 ## Pricing Reference
 
-Approximate costs per image:
-- **gpt-image-1**: ~$0.02 (low), ~$0.07 (medium), ~$0.19 (high) for 1024x1024
-- **dall-e-3**: ~$0.04 (standard), ~$0.08 (hd) for 1024x1024
-- **dall-e-2**: ~$0.02 for 1024x1024
+Costs per image (USD):
+
+### gpt-image-1
+| Size | Low | Medium | High |
+|------|-----|--------|------|
+| 1024x1024 | $0.011 | $0.042 | $0.167 |
+| 1536x1024 | $0.016 | $0.063 | $0.250 |
+| 1024x1536 | $0.016 | $0.063 | $0.250 |
+
+### dall-e-3
+| Size | Standard | HD |
+|------|----------|-----|
+| 1024x1024 | $0.040 | $0.080 |
+| 1024x1792 | $0.080 | $0.120 |
+| 1792x1024 | $0.080 | $0.120 |
+
+### dall-e-2
+| Size | Cost |
+|------|------|
+| 256x256 | $0.016 |
+| 512x512 | $0.018 |
+| 1024x1024 | $0.020 |

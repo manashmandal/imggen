@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -121,6 +122,7 @@ Examples:
 	cmd.Flags().BoolVarP(&flagVerbose, "verbose", "v", false, "log HTTP requests and responses (API keys redacted)")
 
 	cmd.AddCommand(newCostCmd(app))
+	cmd.AddCommand(newDBCmd(app))
 
 	return cmd
 }
@@ -153,7 +155,12 @@ Examples:
 func runCost(app *App, args []string) error {
 	ctx := context.Background()
 
-	store, err := session.NewStore()
+	dbPath, err := getDBPath()
+	if err != nil {
+		return err
+	}
+
+	store, err := session.NewStoreWithPath(dbPath)
 	if err != nil {
 		return fmt.Errorf("failed to open database: %w", err)
 	}
@@ -364,4 +371,138 @@ func runInteractive(_ *cobra.Command, app *App) error {
 
 	r := repl.New(replCfg)
 	return r.Run(ctx)
+}
+
+var flagDBBackup bool
+
+func newDBCmd(app *App) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "db",
+		Short: "Database management commands",
+		Long:  `Manage the SQLite database storing sessions and cost data.`,
+	}
+
+	infoCmd := &cobra.Command{
+		Use:   "info",
+		Short: "Show database location and statistics",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runDBInfo(app)
+		},
+	}
+
+	resetCmd := &cobra.Command{
+		Use:   "reset",
+		Short: "Reset database (delete all data)",
+		Long: `Reset the database by deleting all data.
+
+Use --backup to save the old database before resetting.
+The backup will be saved as sessions.db.backup-TIMESTAMP`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runDBReset(app)
+		},
+	}
+	resetCmd.Flags().BoolVar(&flagDBBackup, "backup", false, "backup old database before reset")
+
+	cmd.AddCommand(infoCmd)
+	cmd.AddCommand(resetCmd)
+
+	return cmd
+}
+
+func runDBInfo(app *App) error {
+	ctx := context.Background()
+
+	dbPath, err := getDBPath()
+	if err != nil {
+		return err
+	}
+
+	fmt.Fprintf(app.Out, "Database location: %s\n\n", dbPath)
+
+	// Check if file exists
+	info, err := os.Stat(dbPath)
+	if os.IsNotExist(err) {
+		fmt.Fprintln(app.Out, "Database does not exist yet (will be created on first use)")
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("failed to stat database: %w", err)
+	}
+
+	fmt.Fprintf(app.Out, "Database size: %.2f KB\n", float64(info.Size())/1024)
+	fmt.Fprintf(app.Out, "Last modified: %s\n\n", info.ModTime().Format("2006-01-02 15:04:05"))
+
+	store, err := session.NewStoreWithPath(dbPath)
+	if err != nil {
+		return fmt.Errorf("failed to open database: %w", err)
+	}
+	defer store.Close()
+
+	// Get session count
+	sessions, err := store.ListSessions(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to list sessions: %w", err)
+	}
+
+	// Get cost summary
+	costSummary, err := store.GetTotalCost(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get cost summary: %w", err)
+	}
+
+	fmt.Fprintln(app.Out, "Statistics:")
+	fmt.Fprintf(app.Out, "  Sessions: %d\n", len(sessions))
+	fmt.Fprintf(app.Out, "  Total images generated: %d\n", costSummary.ImageCount)
+	fmt.Fprintf(app.Out, "  Total cost: $%.4f\n", costSummary.TotalCost)
+
+	return nil
+}
+
+func runDBReset(app *App) error {
+	dbPath, err := getDBPath()
+	if err != nil {
+		return err
+	}
+
+	// Check if file exists
+	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+		fmt.Fprintln(app.Out, "Database does not exist, nothing to reset")
+		return nil
+	}
+
+	if flagDBBackup {
+		backupPath := dbPath + ".backup-" + time.Now().Format("20060102-150405")
+		data, err := os.ReadFile(dbPath)
+		if err != nil {
+			return fmt.Errorf("failed to read database for backup: %w", err)
+		}
+		if err := os.WriteFile(backupPath, data, 0644); err != nil {
+			return fmt.Errorf("failed to write backup: %w", err)
+		}
+		fmt.Fprintf(app.Out, "Backup saved to: %s\n", backupPath)
+	}
+
+	if err := os.Remove(dbPath); err != nil {
+		return fmt.Errorf("failed to delete database: %w", err)
+	}
+
+	fmt.Fprintln(app.Out, "Database deleted successfully")
+
+	// Create fresh database
+	store, err := session.NewStoreWithPath(dbPath)
+	if err != nil {
+		return fmt.Errorf("failed to create new database: %w", err)
+	}
+	store.Close()
+
+	fmt.Fprintln(app.Out, "Fresh database created")
+	return nil
+}
+
+var getDBPath = func() (string, error) {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("failed to get home directory: %w", err)
+	}
+	return filepath.Join(homeDir, ".imggen", "sessions.db"), nil
 }
