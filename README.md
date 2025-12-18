@@ -136,24 +136,13 @@ openai             42    $1.6800
 Total              42    $1.6800
 ```
 
-## Pricing Management
+## Pricing
 
-View and customize the pricing used for cost calculations:
+View the built-in pricing used for cost calculations:
 
 ```bash
-# Show current pricing (built-in or custom)
-imggen price show
-
-# Set a custom price for a model/size/quality combination
-imggen price set gpt-image-1 1024x1024 low 0.015
-imggen price set dall-e-3 1024x1024 standard 0.040
-imggen price set dall-e-2 1024x1024 "" 0.020  # no quality for dall-e-2
-
-# Reset to built-in defaults
-imggen price reset
+imggen price
 ```
-
-Custom prices are stored in `~/.imggen/pricing.json` and override built-in defaults.
 
 ## Database Management
 

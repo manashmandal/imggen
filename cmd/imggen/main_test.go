@@ -1382,23 +1382,17 @@ func TestRootCmd_HasPriceSubcommand(t *testing.T) {
 	}
 }
 
-func TestRunPriceShow_BuiltinDefaults(t *testing.T) {
+func TestRunPriceShow(t *testing.T) {
 	resetFlags()
 	out := &bytes.Buffer{}
 	app := newTestApp(out)
 
-	// Ensure no custom pricing exists
-	tmpDir := t.TempDir()
-	pricingPath := filepath.Join(tmpDir, "pricing.json")
-
-	// Mock the pricing cache path - we can't easily mock it, so just test output
 	err := runPriceShow(app)
 	if err != nil {
 		t.Errorf("runPriceShow() error = %v", err)
 	}
 
 	output := out.String()
-	// Should show built-in pricing
 	if !strings.Contains(output, "gpt-image-1") {
 		t.Error("output should contain gpt-image-1")
 	}
@@ -1407,103 +1401,6 @@ func TestRunPriceShow_BuiltinDefaults(t *testing.T) {
 	}
 	if !strings.Contains(output, "dall-e-2") {
 		t.Error("output should contain dall-e-2")
-	}
-
-	// Clean up test file if created
-	os.Remove(pricingPath)
-}
-
-func TestRunPriceSet_ValidPrice(t *testing.T) {
-	resetFlags()
-	out := &bytes.Buffer{}
-	app := newTestApp(out)
-
-	args := []string{"gpt-image-1", "1024x1024", "low", "0.015"}
-	err := runPriceSet(app, args)
-	if err != nil {
-		t.Errorf("runPriceSet() error = %v", err)
-	}
-
-	output := out.String()
-	if !strings.Contains(output, "Price set") {
-		t.Error("output should confirm price was set")
-	}
-	if !strings.Contains(output, "$0.0150") {
-		t.Error("output should show the price")
-	}
-
-	// Clean up
-	runPriceReset(app)
-}
-
-func TestRunPriceSet_InvalidPrice(t *testing.T) {
-	resetFlags()
-	out := &bytes.Buffer{}
-	app := newTestApp(out)
-
-	args := []string{"gpt-image-1", "1024x1024", "low", "invalid"}
-	err := runPriceSet(app, args)
-	if err == nil {
-		t.Error("runPriceSet() should error with invalid price")
-	}
-	if !strings.Contains(err.Error(), "must be a number") {
-		t.Errorf("error should mention invalid number, got: %v", err)
-	}
-}
-
-func TestRunPriceSet_NegativePrice(t *testing.T) {
-	resetFlags()
-	out := &bytes.Buffer{}
-	app := newTestApp(out)
-
-	args := []string{"gpt-image-1", "1024x1024", "low", "-0.01"}
-	err := runPriceSet(app, args)
-	if err == nil {
-		t.Error("runPriceSet() should error with negative price")
-	}
-	if !strings.Contains(err.Error(), "must be positive") {
-		t.Errorf("error should mention positive, got: %v", err)
-	}
-}
-
-func TestRunPriceSet_DallE2NoQuality(t *testing.T) {
-	resetFlags()
-	out := &bytes.Buffer{}
-	app := newTestApp(out)
-
-	args := []string{"dall-e-2", "1024x1024", "", "0.025"}
-	err := runPriceSet(app, args)
-	if err != nil {
-		t.Errorf("runPriceSet() error = %v", err)
-	}
-
-	output := out.String()
-	if !strings.Contains(output, "dall-e-2 1024x1024 = $0.0250") {
-		t.Error("output should show dall-e-2 price without quality")
-	}
-
-	// Clean up
-	runPriceReset(app)
-}
-
-func TestRunPriceReset(t *testing.T) {
-	resetFlags()
-	out := &bytes.Buffer{}
-	app := newTestApp(out)
-
-	// First set a price
-	runPriceSet(app, []string{"gpt-image-1", "1024x1024", "low", "0.015"})
-
-	// Reset
-	out.Reset()
-	err := runPriceReset(app)
-	if err != nil {
-		t.Errorf("runPriceReset() error = %v", err)
-	}
-
-	output := out.String()
-	if !strings.Contains(output, "Custom pricing removed") {
-		t.Error("output should confirm pricing was removed")
 	}
 }
 
