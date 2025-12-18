@@ -171,6 +171,9 @@ func runCost(app *App, args []string) error {
 		subcommand = args[0]
 	}
 
+	fmt.Fprintln(app.Out, "Note: Costs estimated from https://openai.com/api/pricing (not returned by API)")
+	fmt.Fprintln(app.Out)
+
 	now := time.Now()
 
 	switch subcommand {
