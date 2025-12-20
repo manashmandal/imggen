@@ -257,8 +257,11 @@ func TestRegistrar_convertToAgentsMD(t *testing.T) {
 	if !strings.Contains(got, "Test content") {
 		t.Error("convertToAgentsMD() should contain the content")
 	}
-	if !strings.Contains(got, "imggen \"your prompt here\"") {
-		t.Error("convertToAgentsMD() should contain example usage")
+	if !strings.Contains(got, `--api-key "$OPENAI_API_KEY"`) {
+		t.Error("convertToAgentsMD() should contain explicit API key flag for Codex workaround")
+	}
+	if !strings.Contains(got, "## Usage in Codex") {
+		t.Error("convertToAgentsMD() should contain Codex usage section")
 	}
 	// Should NOT have duplicate headers
 	if strings.Count(got, "# imggen") > 1 {

@@ -439,10 +439,17 @@ func (r *Registrar) convertToAgentsMD(skillContent string) string {
 
 	return fmt.Sprintf(`%s
 
-When the user asks to generate an image, use the imggen command. Example:
+## Usage in Codex
+
+When the user asks to generate an image, use the imggen command.
+
+**Important**: Due to Codex sandbox limitations, you must pass the API key explicitly:
+
 `+"```bash"+`
-imggen "your prompt here"
+imggen --api-key "$OPENAI_API_KEY" "your prompt here"
 `+"```"+`
+
+If the environment variable is not available, ask the user to provide their API key.
 `, content)
 }
 
