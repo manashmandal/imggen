@@ -86,7 +86,8 @@ func newRootCmd(app *App) *cobra.Command {
 
 Supported providers:
   - OpenAI (gpt-image-1, dall-e-3, dall-e-2)
-  - Stability AI (coming soon)
+
+Note: Only OpenAI is currently supported. Other providers (Stability AI, etc.) are work in progress.
 
 Examples:
   imggen "a sunset over mountains"

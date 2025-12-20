@@ -6,6 +6,8 @@
 
 <p align="center">CLI tool for generating images using AI image generation APIs.</p>
 
+> **Note:** Currently only OpenAI is supported. Other providers (Stability AI, etc.) are work in progress.
+
 ## Installation
 
 ### Homebrew (macOS/Linux)
