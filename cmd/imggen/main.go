@@ -18,6 +18,7 @@ import (
 	"github.com/manash/imggen/internal/batch"
 	"github.com/manash/imggen/internal/display"
 	"github.com/manash/imggen/internal/image"
+	"github.com/manash/imggen/internal/keys"
 	"github.com/manash/imggen/internal/provider"
 	"github.com/manash/imggen/internal/provider/openai"
 	"github.com/manash/imggen/internal/register"
@@ -150,6 +151,7 @@ Examples:
 	cmd.AddCommand(newDBCmd(app))
 	cmd.AddCommand(newBatchCmd(app))
 	cmd.AddCommand(newRegisterCmd(app))
+	cmd.AddCommand(newKeysCmd(app))
 
 	return cmd
 }
@@ -264,12 +266,10 @@ func runGenerate(_ *cobra.Command, args []string, app *App) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	apiKey := flagAPIKey
-	if apiKey == "" {
-		apiKey = app.GetEnv("OPENAI_API_KEY")
-	}
-	if apiKey == "" {
-		return fmt.Errorf("API key required: set OPENAI_API_KEY or use --api-key")
+	// Get API key using priority: --api-key flag > stored key > env var
+	apiKey, _, err := keys.GetAPIKey(flagAPIKey, "openai", "OPENAI_API_KEY")
+	if err != nil {
+		return err
 	}
 
 	format := models.OutputFormat(flagFormat)
@@ -475,12 +475,10 @@ func runInteractive(_ *cobra.Command, app *App) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	apiKey := flagAPIKey
-	if apiKey == "" {
-		apiKey = app.GetEnv("OPENAI_API_KEY")
-	}
-	if apiKey == "" {
-		return fmt.Errorf("API key required: set OPENAI_API_KEY or use --api-key")
+	// Get API key using priority: --api-key flag > stored key > env var
+	apiKey, _, err := keys.GetAPIKey(flagAPIKey, "openai", "OPENAI_API_KEY")
+	if err != nil {
+		return err
 	}
 
 	prov, err := app.NewProvider(&provider.Config{APIKey: apiKey, Verbose: flagVerbose}, app.Registry)
@@ -686,12 +684,10 @@ func runBatch(_ *cobra.Command, args []string, app *App) error {
 
 	inputFile := args[0]
 
-	apiKey := flagAPIKey
-	if apiKey == "" {
-		apiKey = app.GetEnv("OPENAI_API_KEY")
-	}
-	if apiKey == "" {
-		return fmt.Errorf("API key required: set OPENAI_API_KEY or use --api-key")
+	// Get API key using priority: --api-key flag > stored key > env var
+	apiKey, _, err := keys.GetAPIKey(flagAPIKey, "openai", "OPENAI_API_KEY")
+	if err != nil {
+		return err
 	}
 
 	format := models.OutputFormat(flagBatchFormat)
@@ -1085,4 +1081,205 @@ func runListBackups(app *App, integration string) error {
 func runRollback(app *App, backupPath string) error {
 	registrar := register.NewRegistrar(app.Out, app.Err, os.Stdin)
 	return registrar.Rollback(backupPath)
+}
+
+// Keys command
+
+func newKeysCmd(app *App) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "keys",
+		Short: "Manage API keys",
+		Long: `Manage API keys for image generation providers.
+
+Keys are stored securely in a local configuration file and are used
+automatically when generating images. This is useful for CLI tools
+that don't pass environment variables (like Codex CLI).
+
+Key lookup order:
+  1. --api-key flag (highest priority)
+  2. Stored key in keys.json
+  3. OPENAI_API_KEY environment variable
+
+Examples:
+  imggen keys set              # Save your OpenAI API key
+  imggen keys                  # List stored keys
+  imggen keys path             # Show keys.json location
+  imggen keys delete           # Remove stored key`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runKeysList(app)
+		},
+	}
+
+	cmd.AddCommand(newKeysSetCmd(app))
+	cmd.AddCommand(newKeysPathCmd(app))
+	cmd.AddCommand(newKeysDeleteCmd(app))
+
+	return cmd
+}
+
+func newKeysSetCmd(app *App) *cobra.Command {
+	return &cobra.Command{
+		Use:   "set",
+		Short: "Save an API key",
+		Long: `Save an API key for OpenAI.
+
+The key will be stored in a local configuration file and used
+automatically when generating images. This is an alternative to
+setting the OPENAI_API_KEY environment variable.
+
+Example:
+  imggen keys set`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runKeysSet(app)
+		},
+	}
+}
+
+func newKeysPathCmd(app *App) *cobra.Command {
+	return &cobra.Command{
+		Use:   "path",
+		Short: "Show the keys.json file location",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runKeysPath(app)
+		},
+	}
+}
+
+func newKeysDeleteCmd(app *App) *cobra.Command {
+	return &cobra.Command{
+		Use:   "delete",
+		Short: "Delete a stored API key",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runKeysDelete(app)
+		},
+	}
+}
+
+func runKeysList(app *App) error {
+	store, err := keys.NewStore()
+	if err != nil {
+		return err
+	}
+
+	providers, err := store.List()
+	if err != nil {
+		return err
+	}
+
+	if len(providers) == 0 {
+		fmt.Fprintln(app.Out, "No API keys stored.")
+		fmt.Fprintln(app.Out, "")
+		fmt.Fprintln(app.Out, "To save a key:")
+		fmt.Fprintln(app.Out, "  imggen keys set")
+		return nil
+	}
+
+	fmt.Fprintln(app.Out, "Stored API keys:")
+	fmt.Fprintln(app.Out, "")
+	for _, provider := range providers {
+		key, _ := store.Get(provider)
+		fmt.Fprintf(app.Out, "  %-10s  %s\n", provider, keys.MaskKey(key))
+	}
+	fmt.Fprintln(app.Out, "")
+	fmt.Fprintf(app.Out, "Keys file: %s\n", store.Path())
+
+	return nil
+}
+
+func runKeysSet(app *App) error {
+	store, err := keys.NewStore()
+	if err != nil {
+		return err
+	}
+
+	provider := "openai"
+
+	// Check if key already exists
+	existing, _ := store.Get(provider)
+	if existing != "" {
+		fmt.Fprintf(app.Out, "Existing key for %s: %s\n", provider, keys.MaskKey(existing))
+		fmt.Fprint(app.Out, "Replace it? [y/N] ")
+
+		reader := bufio.NewReader(os.Stdin)
+		response, _ := reader.ReadString('\n')
+		response = strings.TrimSpace(strings.ToLower(response))
+		if response != "y" && response != "yes" {
+			fmt.Fprintln(app.Out, "Cancelled.")
+			return nil
+		}
+	}
+
+	// Prompt for key
+	fmt.Fprintf(app.Out, "Enter API key for %s: ", provider)
+
+	// Read key (hide input if terminal)
+	var key string
+	if term.IsTerminal(int(os.Stdin.Fd())) {
+		keyBytes, err := term.ReadPassword(int(os.Stdin.Fd()))
+		if err != nil {
+			return fmt.Errorf("failed to read key: %w", err)
+		}
+		key = string(keyBytes)
+		fmt.Fprintln(app.Out, "") // newline after hidden input
+	} else {
+		reader := bufio.NewReader(os.Stdin)
+		key, _ = reader.ReadString('\n')
+	}
+
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return fmt.Errorf("no key provided")
+	}
+
+	if err := store.Set(provider, key); err != nil {
+		return err
+	}
+
+	fmt.Fprintf(app.Out, "Saved key for %s: %s\n", provider, keys.MaskKey(key))
+	fmt.Fprintf(app.Out, "Keys file: %s\n", store.Path())
+
+	return nil
+}
+
+func runKeysPath(app *App) error {
+	store, err := keys.NewStore()
+	if err != nil {
+		return err
+	}
+
+	fmt.Fprintln(app.Out, store.Path())
+	return nil
+}
+
+func runKeysDelete(app *App) error {
+	store, err := keys.NewStore()
+	if err != nil {
+		return err
+	}
+
+	provider := "openai"
+
+	// Check if key exists
+	existing, _ := store.Get(provider)
+	if existing == "" {
+		fmt.Fprintf(app.Out, "No key stored for %s\n", provider)
+		return nil
+	}
+
+	fmt.Fprintf(app.Out, "Delete key for %s? (%s) [y/N] ", provider, keys.MaskKey(existing))
+
+	reader := bufio.NewReader(os.Stdin)
+	response, _ := reader.ReadString('\n')
+	response = strings.TrimSpace(strings.ToLower(response))
+	if response != "y" && response != "yes" {
+		fmt.Fprintln(app.Out, "Cancelled.")
+		return nil
+	}
+
+	if err := store.Delete(provider); err != nil {
+		return err
+	}
+
+	fmt.Fprintf(app.Out, "Deleted key for %s\n", provider)
+	return nil
 }

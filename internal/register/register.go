@@ -439,15 +439,21 @@ func (r *Registrar) convertToAgentsMD(skillContent string) string {
 
 	return fmt.Sprintf(`%s
 
-## Known Issue
+## Codex CLI Note
 
-⚠️ **Codex CLI does not pass environment variables to subprocesses**, including OPENAI_API_KEY.
-This is a known bug: https://github.com/openai/codex/issues/6263
+Codex CLI does not pass environment variables to subprocesses ([known bug](https://github.com/openai/codex/issues/6263)).
 
-**Workaround**: Ask the user for their API key and pass it explicitly:
+**Solution**: Use imggen's built-in key storage:
 `+"```bash"+`
-imggen --api-key "USER_PROVIDED_KEY" "your prompt here"
+# One-time setup (run outside Codex)
+imggen keys set
+# Enter your OpenAI API key when prompted
+
+# Then in Codex, just use:
+imggen "your prompt here"
 `+"```"+`
+
+The key is stored in ~/.config/imggen/keys.json and used automatically.
 `, content)
 }
 

@@ -257,8 +257,11 @@ func TestRegistrar_convertToAgentsMD(t *testing.T) {
 	if !strings.Contains(got, "Test content") {
 		t.Error("convertToAgentsMD() should contain the content")
 	}
-	if !strings.Contains(got, "## Known Issue") {
-		t.Error("convertToAgentsMD() should contain Known Issue section")
+	if !strings.Contains(got, "## Codex CLI Note") {
+		t.Error("convertToAgentsMD() should contain Codex CLI Note section")
+	}
+	if !strings.Contains(got, "imggen keys set") {
+		t.Error("convertToAgentsMD() should contain keys set workaround")
 	}
 	if !strings.Contains(got, "github.com/openai/codex/issues/6263") {
 		t.Error("convertToAgentsMD() should contain reference to Codex bug")

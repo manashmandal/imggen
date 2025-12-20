@@ -256,7 +256,7 @@ imggen register rollback <backup-path>
 | Cursor | `.cursor/rules/imggen.mdc` | Project-local | ✅ Working |
 | Gemini CLI | `~/.gemini/GEMINI.md` | Global | ✅ Working |
 
-*\*Codex limitation: Codex CLI does not pass environment variables (like `OPENAI_API_KEY`) to subprocesses due to a [known bug](https://github.com/openai/codex/issues/6263). Workaround: provide your API key directly when prompted.*
+*\*Codex limitation: Codex CLI does not pass environment variables (like `OPENAI_API_KEY`) to subprocesses due to a [known bug](https://github.com/openai/codex/issues/6263). Workaround: run `imggen keys set` to store your API key locally.*
 
 *Cursor note: Cursor rules are project-specific. Run `imggen register cursor` in each project where you want imggen available.*
 
@@ -265,11 +265,44 @@ The command automatically:
 - Asks for confirmation before changes
 - Detects if already registered (use `--force` to overwrite)
 
-## Environment Variables
+## API Key Management
+
+imggen supports multiple ways to provide your OpenAI API key:
 
 ```bash
+# Option 1: Store key locally (recommended for CLI tools that don't pass env vars)
+imggen keys set
+# Enter your API key when prompted - it's stored securely in ~/.config/imggen/keys.json
+
+# Option 2: Environment variable
 export OPENAI_API_KEY="your-api-key"
+
+# Option 3: Pass directly via flag
+imggen --api-key "your-key" "prompt"
 ```
+
+### Key Lookup Priority
+
+1. `--api-key` flag (highest priority)
+2. Stored key in `~/.config/imggen/keys.json`
+3. `OPENAI_API_KEY` environment variable
+
+### Key Management Commands
+
+```bash
+imggen keys          # List stored keys
+imggen keys set      # Save a new key (prompts for input)
+imggen keys path     # Show keys.json location
+imggen keys delete   # Remove stored key
+```
+
+### Storage Location
+
+| Platform | Path |
+|----------|------|
+| Linux | `~/.config/imggen/keys.json` |
+| macOS | `~/Library/Application Support/imggen/keys.json` |
+| Windows | `%APPDATA%\imggen\keys.json` |
 
 ## License
 

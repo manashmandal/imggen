@@ -168,6 +168,12 @@ func TestRunGenerate_NoAPIKey(t *testing.T) {
 	out := &bytes.Buffer{}
 	app := newTestApp(out)
 
+	// Use empty temp dir to ensure no stored key is found
+	tmpDir := t.TempDir()
+	t.Setenv("IMGGEN_CONFIG_DIR", tmpDir)
+	// Clear the env var to ensure no key is found from environment
+	t.Setenv("OPENAI_API_KEY", "")
+
 	cmd := &cobra.Command{}
 	err := runGenerate(cmd, []string{"test prompt"}, app)
 
