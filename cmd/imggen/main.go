@@ -20,6 +20,7 @@ import (
 	"github.com/manash/imggen/internal/image"
 	"github.com/manash/imggen/internal/provider"
 	"github.com/manash/imggen/internal/provider/openai"
+	"github.com/manash/imggen/internal/register"
 	"github.com/manash/imggen/internal/repl"
 	"github.com/manash/imggen/internal/session"
 	"github.com/manash/imggen/pkg/models"
@@ -148,6 +149,7 @@ Examples:
 	cmd.AddCommand(newCostCmd(app))
 	cmd.AddCommand(newDBCmd(app))
 	cmd.AddCommand(newBatchCmd(app))
+	cmd.AddCommand(newRegisterCmd(app))
 
 	return cmd
 }
@@ -807,4 +809,280 @@ func countSuccessful(results []batch.Result) int {
 		}
 	}
 	return count
+}
+
+var (
+	flagRegisterDryRun bool
+	flagRegisterForce  bool
+)
+
+func newRegisterCmd(app *App) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "register [integration...]",
+		Short: "Register imggen with AI CLI tools",
+		Long: `Register imggen with AI CLI tools so they know how to use it.
+
+Supported integrations:
+  claude  - Claude Code (~/.claude/skills/imggen/SKILL.md)
+  codex   - OpenAI Codex CLI (~/.codex/AGENTS.md)
+  cursor  - Cursor (~/.cursor/rules/imggen.mdc)
+  gemini  - Gemini CLI (~/.gemini/GEMINI.md)
+
+Examples:
+  imggen register --all              # Register with all supported CLIs
+  imggen register claude codex       # Register with specific CLIs
+  imggen register --dry-run --all    # Preview what would happen
+  imggen register status             # Show registration status
+  imggen register unregister claude  # Remove from Claude Code
+
+The command will:
+  1. Show what changes will be made
+  2. Create a backup of any existing config
+  3. Ask for confirmation before proceeding`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runRegister(app, args)
+		},
+	}
+
+	cmd.Flags().BoolVar(&flagRegisterDryRun, "dry-run", false, "show what would happen without making changes")
+	cmd.Flags().BoolVar(&flagRegisterForce, "force", false, "overwrite existing registration")
+	cmd.Flags().Bool("all", false, "register with all supported integrations")
+
+	cmd.AddCommand(newRegisterStatusCmd(app))
+	cmd.AddCommand(newRegisterUnregisterCmd(app))
+	cmd.AddCommand(newRegisterBackupsCmd(app))
+	cmd.AddCommand(newRegisterRollbackCmd(app))
+
+	return cmd
+}
+
+func newRegisterStatusCmd(app *App) *cobra.Command {
+	return &cobra.Command{
+		Use:   "status",
+		Short: "Show registration status for all integrations",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runRegisterStatus(app)
+		},
+	}
+}
+
+func newRegisterUnregisterCmd(app *App) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "unregister [integration...]",
+		Short: "Remove imggen from AI CLI tools",
+		Args:  cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runUnregister(app, args)
+		},
+	}
+	cmd.Flags().BoolVar(&flagRegisterDryRun, "dry-run", false, "show what would happen without making changes")
+	return cmd
+}
+
+func newRegisterBackupsCmd(app *App) *cobra.Command {
+	return &cobra.Command{
+		Use:   "backups [integration]",
+		Short: "List backup files for an integration",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runListBackups(app, args[0])
+		},
+	}
+}
+
+func newRegisterRollbackCmd(app *App) *cobra.Command {
+	return &cobra.Command{
+		Use:   "rollback <backup-path>",
+		Short: "Restore a backup file",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runRollback(app, args[0])
+		},
+	}
+}
+
+func runRegister(app *App, args []string) error {
+	registrar := register.NewRegistrar(app.Out, app.Err, os.Stdin)
+	registrar.DryRun = flagRegisterDryRun
+	registrar.Force = flagRegisterForce
+
+	var integrations []register.Integration
+
+	// Check for --all flag
+	allFlag := false
+	for _, arg := range os.Args {
+		if arg == "--all" {
+			allFlag = true
+			break
+		}
+	}
+
+	if allFlag {
+		integrations = register.AllIntegrations()
+	} else if len(args) == 0 {
+		// Show help if no integrations specified
+		fmt.Fprintln(app.Out, "Available integrations:")
+		for _, i := range register.AllIntegrations() {
+			registered, _, _ := registrar.Status(i)
+			status := "not registered"
+			if registered {
+				status = "registered"
+			}
+			fmt.Fprintf(app.Out, "  %-8s  %s (%s)\n", i, i.Description(), status)
+		}
+		fmt.Fprintln(app.Out, "\nUsage:")
+		fmt.Fprintln(app.Out, "  imggen register --all           # Register with all integrations")
+		fmt.Fprintln(app.Out, "  imggen register claude codex    # Register with specific integrations")
+		fmt.Fprintln(app.Out, "  imggen register status          # Show detailed status")
+		fmt.Fprintln(app.Out, "\nUse 'imggen register --help' for more options.")
+		return nil
+	} else {
+		for _, arg := range args {
+			i := register.Integration(arg)
+			valid := false
+			for _, all := range register.AllIntegrations() {
+				if i == all {
+					valid = true
+					break
+				}
+			}
+			if !valid {
+				return fmt.Errorf("unknown integration %q: valid options are %v", arg, register.AllIntegrations())
+			}
+			integrations = append(integrations, i)
+		}
+	}
+
+	if flagRegisterDryRun {
+		fmt.Fprintln(app.Out, "DRY RUN - no changes will be made")
+	}
+
+	results := registrar.Register(integrations)
+
+	// Summary
+	fmt.Fprintln(app.Out, "\nSummary:")
+	var succeeded, skipped, failed int
+	for _, r := range results {
+		if r.Error != nil {
+			fmt.Fprintf(app.Out, "  ✗ %s: %v\n", r.Integration.DisplayName(), r.Error)
+			failed++
+		} else if r.WasSkipped {
+			fmt.Fprintf(app.Out, "  - %s: %s\n", r.Integration.DisplayName(), r.SkipReason)
+			skipped++
+		} else {
+			fmt.Fprintf(app.Out, "  ✓ %s: %s\n", r.Integration.DisplayName(), r.ConfigPath)
+			succeeded++
+		}
+	}
+
+	fmt.Fprintf(app.Out, "\n%d succeeded, %d skipped, %d failed\n", succeeded, skipped, failed)
+
+	if failed > 0 {
+		return fmt.Errorf("%d registration(s) failed", failed)
+	}
+
+	return nil
+}
+
+func runRegisterStatus(app *App) error {
+	registrar := register.NewRegistrar(app.Out, app.Err, os.Stdin)
+
+	fmt.Fprintln(app.Out, "Registration Status:")
+	fmt.Fprintln(app.Out, "")
+
+	for _, i := range register.AllIntegrations() {
+		registered, configPath, err := registrar.Status(i)
+		if err != nil {
+			fmt.Fprintf(app.Out, "%-15s  Error: %v\n", i.DisplayName(), err)
+			continue
+		}
+
+		status := "✗ Not registered"
+		if registered {
+			status = "✓ Registered"
+		}
+
+		fmt.Fprintf(app.Out, "%-15s  %s\n", i.DisplayName(), status)
+		fmt.Fprintf(app.Out, "                 %s\n", configPath)
+
+		// List backups
+		backups, _ := registrar.ListBackups(i)
+		if len(backups) > 0 {
+			fmt.Fprintf(app.Out, "                 Backups: %d\n", len(backups))
+		}
+		fmt.Fprintln(app.Out, "")
+	}
+
+	return nil
+}
+
+func runUnregister(app *App, args []string) error {
+	registrar := register.NewRegistrar(app.Out, app.Err, os.Stdin)
+	registrar.DryRun = flagRegisterDryRun
+
+	for _, arg := range args {
+		i := register.Integration(arg)
+		valid := false
+		for _, all := range register.AllIntegrations() {
+			if i == all {
+				valid = true
+				break
+			}
+		}
+		if !valid {
+			return fmt.Errorf("unknown integration %q", arg)
+		}
+
+		if err := registrar.Unregister(i); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func runListBackups(app *App, integration string) error {
+	registrar := register.NewRegistrar(app.Out, app.Err, os.Stdin)
+
+	i := register.Integration(integration)
+	valid := false
+	for _, all := range register.AllIntegrations() {
+		if i == all {
+			valid = true
+			break
+		}
+	}
+	if !valid {
+		return fmt.Errorf("unknown integration %q", integration)
+	}
+
+	backups, err := registrar.ListBackups(i)
+	if err != nil {
+		return err
+	}
+
+	if len(backups) == 0 {
+		fmt.Fprintf(app.Out, "No backups found for %s\n", i.DisplayName())
+		return nil
+	}
+
+	fmt.Fprintf(app.Out, "Backups for %s:\n", i.DisplayName())
+	for _, b := range backups {
+		info, err := os.Stat(b)
+		if err != nil {
+			fmt.Fprintf(app.Out, "  %s\n", b)
+		} else {
+			fmt.Fprintf(app.Out, "  %s (%s)\n", b, info.ModTime().Format("2006-01-02 15:04:05"))
+		}
+	}
+
+	fmt.Fprintln(app.Out, "\nTo restore a backup:")
+	fmt.Fprintln(app.Out, "  imggen register rollback <backup-path>")
+
+	return nil
+}
+
+func runRollback(app *App, backupPath string) error {
+	registrar := register.NewRegistrar(app.Out, app.Err, os.Stdin)
+	return registrar.Rollback(backupPath)
 }
