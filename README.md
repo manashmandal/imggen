@@ -217,6 +217,50 @@ imggen db reset
 imggen db reset --backup
 ```
 
+## AI CLI Integration
+
+Register imggen with AI coding assistants so they know how to use it:
+
+```bash
+# Show available integrations and status
+imggen register
+
+# Register with all supported AI CLIs
+imggen register --all
+
+# Register with specific CLIs
+imggen register claude codex
+
+# Preview changes without modifying files
+imggen register --dry-run --all
+
+# Check registration status
+imggen register status
+
+# Remove registration
+imggen register unregister claude
+
+# List backups for an integration
+imggen register backups claude
+
+# Restore from backup
+imggen register rollback <backup-path>
+```
+
+### Supported Integrations
+
+| CLI | Config Location | Description |
+|-----|-----------------|-------------|
+| Claude Code | `~/.claude/skills/imggen/SKILL.md` | Anthropic's CLI |
+| Codex CLI | `~/.codex/AGENTS.md` | OpenAI's CLI |
+| Cursor | `~/.cursor/rules/imggen.mdc` | Cursor AI editor |
+| Gemini CLI | `~/.gemini/GEMINI.md` | Google's CLI |
+
+The command automatically:
+- Creates backups before modifying existing configs
+- Asks for confirmation before changes
+- Detects if already registered (use `--force` to overwrite)
+
 ## Environment Variables
 
 ```bash

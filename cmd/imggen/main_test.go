@@ -69,6 +69,8 @@ func resetFlags() {
 	flagShow = false
 	flagInteractive = false
 	flagDBBackup = false
+	flagRegisterDryRun = false
+	flagRegisterForce = false
 }
 
 // newTestApp creates an App configured for testing.
@@ -1365,5 +1367,206 @@ func TestRootCmd_HasDBSubcommand(t *testing.T) {
 	}
 	if dbCmd == nil {
 		t.Error("db subcommand is nil")
+	}
+}
+
+// Register command tests
+
+func TestNewRegisterCmd(t *testing.T) {
+	out := &bytes.Buffer{}
+	app := newTestApp(out)
+	cmd := newRegisterCmd(app)
+
+	if cmd.Use != "register [integration...]" {
+		t.Errorf("Use = %s, want 'register [integration...]'", cmd.Use)
+	}
+	if cmd.Short == "" {
+		t.Error("Short description is empty")
+	}
+
+	// Check flags exist
+	if cmd.Flags().Lookup("dry-run") == nil {
+		t.Error("--dry-run flag not found")
+	}
+	if cmd.Flags().Lookup("force") == nil {
+		t.Error("--force flag not found")
+	}
+	if cmd.Flags().Lookup("all") == nil {
+		t.Error("--all flag not found")
+	}
+}
+
+func TestRootCmd_HasRegisterSubcommand(t *testing.T) {
+	out := &bytes.Buffer{}
+	app := newTestApp(out)
+	cmd := newRootCmd(app)
+
+	registerCmd, _, err := cmd.Find([]string{"register"})
+	if err != nil {
+		t.Errorf("register subcommand not found: %v", err)
+	}
+	if registerCmd == nil {
+		t.Error("register subcommand is nil")
+	}
+}
+
+func TestRegisterCmd_HasSubcommands(t *testing.T) {
+	out := &bytes.Buffer{}
+	app := newTestApp(out)
+	cmd := newRegisterCmd(app)
+
+	// Check subcommands exist
+	subcommands := []string{"status", "unregister", "backups", "rollback"}
+	for _, name := range subcommands {
+		subCmd, _, err := cmd.Find([]string{name})
+		if err != nil {
+			t.Errorf("%s subcommand not found: %v", name, err)
+			continue
+		}
+		if subCmd == nil {
+			t.Errorf("%s subcommand is nil", name)
+		}
+	}
+}
+
+func TestRunRegister_NoArgs(t *testing.T) {
+	resetFlags()
+	out := &bytes.Buffer{}
+	app := newTestApp(out)
+
+	err := runRegister(app, []string{})
+	if err != nil {
+		t.Errorf("runRegister() error = %v, want nil for no args (shows help)", err)
+	}
+
+	output := out.String()
+	if !strings.Contains(output, "Available integrations:") {
+		t.Error("output should show available integrations")
+	}
+}
+
+func TestRunRegister_InvalidIntegration(t *testing.T) {
+	resetFlags()
+	out := &bytes.Buffer{}
+	app := newTestApp(out)
+
+	err := runRegister(app, []string{"invalid-integration"})
+	if err == nil {
+		t.Error("runRegister() error = nil, want error for invalid integration")
+	}
+	if !strings.Contains(err.Error(), "unknown integration") {
+		t.Errorf("error = %v, want 'unknown integration'", err)
+	}
+}
+
+func TestRunRegister_DryRun(t *testing.T) {
+	resetFlags()
+	flagRegisterDryRun = true
+	out := &bytes.Buffer{}
+	app := newTestApp(out)
+
+	err := runRegister(app, []string{"claude"})
+	if err != nil {
+		t.Errorf("runRegister() error = %v", err)
+	}
+
+	output := out.String()
+	if !strings.Contains(output, "DRY RUN") {
+		t.Error("output should indicate dry run mode")
+	}
+	// Should show either "dry-run mode" or "already registered" skip reason
+	if !strings.Contains(output, "skipped") && !strings.Contains(output, "Summary:") {
+		t.Error("output should show summary with skip status")
+	}
+}
+
+func TestRunRegisterStatus(t *testing.T) {
+	resetFlags()
+	out := &bytes.Buffer{}
+	app := newTestApp(out)
+
+	err := runRegisterStatus(app)
+	if err != nil {
+		t.Errorf("runRegisterStatus() error = %v", err)
+	}
+
+	output := out.String()
+	if !strings.Contains(output, "Registration Status:") {
+		t.Error("output should show registration status header")
+	}
+	if !strings.Contains(output, "Claude Code") {
+		t.Error("output should list Claude Code")
+	}
+	if !strings.Contains(output, "Codex") {
+		t.Error("output should list Codex")
+	}
+	if !strings.Contains(output, "Cursor") {
+		t.Error("output should list Cursor")
+	}
+	if !strings.Contains(output, "Gemini") {
+		t.Error("output should list Gemini")
+	}
+}
+
+func TestRunUnregister_InvalidIntegration(t *testing.T) {
+	resetFlags()
+	out := &bytes.Buffer{}
+	app := newTestApp(out)
+
+	err := runUnregister(app, []string{"invalid"})
+	if err == nil {
+		t.Error("runUnregister() error = nil, want error for invalid integration")
+	}
+	if !strings.Contains(err.Error(), "unknown integration") {
+		t.Errorf("error = %v, want 'unknown integration'", err)
+	}
+}
+
+func TestRunListBackups_InvalidIntegration(t *testing.T) {
+	resetFlags()
+	out := &bytes.Buffer{}
+	app := newTestApp(out)
+
+	err := runListBackups(app, "invalid")
+	if err == nil {
+		t.Error("runListBackups() error = nil, want error for invalid integration")
+	}
+	if !strings.Contains(err.Error(), "unknown integration") {
+		t.Errorf("error = %v, want 'unknown integration'", err)
+	}
+}
+
+func TestRunListBackups_NoBackups(t *testing.T) {
+	resetFlags()
+	out := &bytes.Buffer{}
+	app := newTestApp(out)
+
+	// This may or may not have backups depending on system state
+	// but shouldn't error
+	err := runListBackups(app, "claude")
+	if err != nil {
+		t.Errorf("runListBackups() error = %v", err)
+	}
+}
+
+func TestRunRollback_NonexistentFile(t *testing.T) {
+	resetFlags()
+	out := &bytes.Buffer{}
+	app := newTestApp(out)
+
+	err := runRollback(app, "/nonexistent/path.backup-20240101-120000")
+	if err == nil {
+		t.Error("runRollback() error = nil, want error for nonexistent file")
+	}
+}
+
+func TestRunRollback_InvalidPath(t *testing.T) {
+	resetFlags()
+	out := &bytes.Buffer{}
+	app := newTestApp(out)
+
+	err := runRollback(app, "/some/path/without/backup/suffix")
+	if err == nil {
+		t.Error("runRollback() error = nil, want error for invalid backup path format")
 	}
 }
