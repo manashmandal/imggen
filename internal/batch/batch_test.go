@@ -3,6 +3,8 @@ package batch
 import (
 	"bytes"
 	"context"
+	"fmt"
+	"os"
 	"strings"
 	"testing"
 
@@ -314,6 +316,373 @@ func TestTruncate(t *testing.T) {
 				t.Errorf("truncate(%q, %d) = %q, want %q", tt.input, tt.maxLen, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestPrintSummary(t *testing.T) {
+	tests := []struct {
+		name    string
+		results []Result
+		wantOut string
+	}{
+		{
+			name: "all successful",
+			results: []Result{
+				{Index: 1, Prompt: "test one", Path: "/tmp/1.png", Cost: 0.04},
+				{Index: 2, Prompt: "test two", Path: "/tmp/2.png", Cost: 0.04},
+			},
+			wantOut: "Successful: 2/2",
+		},
+		{
+			name: "with failures",
+			results: []Result{
+				{Index: 1, Prompt: "test one", Path: "/tmp/1.png", Cost: 0.04},
+				{Index: 2, Prompt: "test two", Error: fmt.Errorf("generation failed")},
+			},
+			wantOut: "Failed: 1",
+		},
+		{
+			name:    "empty results",
+			results: []Result{},
+			wantOut: "Successful: 0/0",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out := &bytes.Buffer{}
+			proc := NewProcessor(
+				&mockProvider{},
+				image.NewSaver(),
+				models.DefaultRegistry(),
+				out,
+				out,
+			)
+			proc.PrintSummary(tt.results)
+			if !strings.Contains(out.String(), tt.wantOut) {
+				t.Errorf("PrintSummary() output = %q, want to contain %q", out.String(), tt.wantOut)
+			}
+		})
+	}
+}
+
+func TestParseFile(t *testing.T) {
+	tests := []struct {
+		name     string
+		filename string
+		content  string
+		want     int
+		wantErr  bool
+	}{
+		{
+			name:     "txt file",
+			filename: "test.txt",
+			content:  "prompt one\nprompt two",
+			want:     2,
+			wantErr:  false,
+		},
+		{
+			name:     "json file",
+			filename: "test.json",
+			content:  `[{"prompt": "one"}, {"prompt": "two"}]`,
+			want:     2,
+			wantErr:  false,
+		},
+		{
+			name:     "unsupported extension",
+			filename: "test.yaml",
+			content:  "prompt: test",
+			want:     0,
+			wantErr:  true,
+		},
+		{
+			name:     "no extension treated as txt",
+			filename: "prompts",
+			content:  "prompt one\nprompt two",
+			want:     2,
+			wantErr:  false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			filePath := tmpDir + "/" + tt.filename
+			if err := os.WriteFile(filePath, []byte(tt.content), 0644); err != nil {
+				t.Fatalf("failed to write test file: %v", err)
+			}
+
+			items, err := ParseFile(filePath)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ParseFile() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if !tt.wantErr && len(items) != tt.want {
+				t.Errorf("ParseFile() got %d items, want %d", len(items), tt.want)
+			}
+		})
+	}
+}
+
+func TestParseFile_NotFound(t *testing.T) {
+	_, err := ParseFile("/nonexistent/file.txt")
+	if err == nil {
+		t.Error("ParseFile() expected error for non-existent file")
+	}
+}
+
+func TestProcessorWithErrors(t *testing.T) {
+	t.Run("unknown model error", func(t *testing.T) {
+		out := &bytes.Buffer{}
+		errOut := &bytes.Buffer{}
+		proc := NewProcessor(
+			&mockProvider{},
+			image.NewSaver(),
+			models.DefaultRegistry(),
+			out,
+			errOut,
+		)
+
+		items := []Item{
+			{Index: 1, Prompt: "test", Model: "unknown-model"},
+		}
+
+		opts := &Options{
+			OutputDir:    t.TempDir(),
+			DefaultModel: "gpt-image-1",
+			Format:       models.FormatPNG,
+			Parallel:     1,
+		}
+
+		results, _ := proc.Process(context.Background(), items, opts)
+		if results[0].Error == nil {
+			t.Error("Expected error for unknown model")
+		}
+	})
+
+	t.Run("generation error", func(t *testing.T) {
+		out := &bytes.Buffer{}
+		errOut := &bytes.Buffer{}
+		proc := NewProcessor(
+			&mockProvider{
+				generateFunc: func(ctx context.Context, req *models.Request) (*models.Response, error) {
+					return nil, fmt.Errorf("API error")
+				},
+			},
+			image.NewSaver(),
+			models.DefaultRegistry(),
+			out,
+			errOut,
+		)
+
+		items := []Item{
+			{Index: 1, Prompt: "test"},
+		}
+
+		opts := &Options{
+			OutputDir:    t.TempDir(),
+			DefaultModel: "gpt-image-1",
+			Format:       models.FormatPNG,
+			Parallel:     1,
+		}
+
+		results, _ := proc.Process(context.Background(), items, opts)
+		if results[0].Error == nil {
+			t.Error("Expected error for generation failure")
+		}
+	})
+
+	t.Run("stop on error", func(t *testing.T) {
+		out := &bytes.Buffer{}
+		errOut := &bytes.Buffer{}
+		proc := NewProcessor(
+			&mockProvider{
+				generateFunc: func(ctx context.Context, req *models.Request) (*models.Response, error) {
+					return nil, fmt.Errorf("API error")
+				},
+			},
+			image.NewSaver(),
+			models.DefaultRegistry(),
+			out,
+			errOut,
+		)
+
+		items := []Item{
+			{Index: 1, Prompt: "test one"},
+			{Index: 2, Prompt: "test two"},
+		}
+
+		opts := &Options{
+			OutputDir:    t.TempDir(),
+			DefaultModel: "gpt-image-1",
+			Format:       models.FormatPNG,
+			Parallel:     1,
+			StopOnError:  true,
+		}
+
+		_, err := proc.Process(context.Background(), items, opts)
+		if err == nil {
+			t.Error("Expected error when StopOnError is true")
+		}
+	})
+}
+
+func TestProcessorWithDelay(t *testing.T) {
+	out := &bytes.Buffer{}
+	proc := NewProcessor(
+		&mockProvider{},
+		image.NewSaver(),
+		models.DefaultRegistry(),
+		out,
+		out,
+	)
+
+	items := []Item{
+		{Index: 1, Prompt: "test one"},
+		{Index: 2, Prompt: "test two"},
+	}
+
+	opts := &Options{
+		OutputDir:    t.TempDir(),
+		DefaultModel: "gpt-image-1",
+		Format:       models.FormatPNG,
+		Parallel:     1,
+		DelayMs:      10,
+	}
+
+	_, err := proc.Process(context.Background(), items, opts)
+	if err != nil {
+		t.Errorf("Process() with delay error = %v", err)
+	}
+}
+
+func TestProcessorContextCancellation(t *testing.T) {
+	out := &bytes.Buffer{}
+	proc := NewProcessor(
+		&mockProvider{},
+		image.NewSaver(),
+		models.DefaultRegistry(),
+		out,
+		out,
+	)
+
+	items := []Item{
+		{Index: 1, Prompt: "test one"},
+		{Index: 2, Prompt: "test two"},
+	}
+
+	opts := &Options{
+		OutputDir:    t.TempDir(),
+		DefaultModel: "gpt-image-1",
+		Format:       models.FormatPNG,
+		Parallel:     1,
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // Cancel immediately
+
+	_, err := proc.Process(ctx, items, opts)
+	if err == nil {
+		t.Error("Expected context cancellation error")
+	}
+}
+
+func TestProcessorParallelWithMoreWorkersThanItems(t *testing.T) {
+	out := &bytes.Buffer{}
+	proc := NewProcessor(
+		&mockProvider{},
+		image.NewSaver(),
+		models.DefaultRegistry(),
+		out,
+		out,
+	)
+
+	items := []Item{
+		{Index: 1, Prompt: "test"},
+	}
+
+	opts := &Options{
+		OutputDir:    t.TempDir(),
+		DefaultModel: "gpt-image-1",
+		Format:       models.FormatPNG,
+		Parallel:     10, // More workers than items
+	}
+
+	results, err := proc.Process(context.Background(), items, opts)
+	if err != nil {
+		t.Errorf("Process() error = %v", err)
+	}
+	if len(results) != 1 {
+		t.Errorf("Process() got %d results, want 1", len(results))
+	}
+}
+
+func TestProcessItemWithCustomOptions(t *testing.T) {
+	out := &bytes.Buffer{}
+	proc := NewProcessor(
+		&mockProvider{},
+		image.NewSaver(),
+		models.DefaultRegistry(),
+		out,
+		out,
+	)
+
+	items := []Item{
+		{Index: 1, Prompt: "test", Size: "1024x1024", Quality: "high"},
+	}
+
+	opts := &Options{
+		OutputDir:    t.TempDir(),
+		DefaultModel: "gpt-image-1",
+		Format:       models.FormatPNG,
+		Parallel:     1,
+	}
+
+	results, err := proc.Process(context.Background(), items, opts)
+	if err != nil {
+		t.Errorf("Process() error = %v", err)
+	}
+	if results[0].Error != nil {
+		t.Errorf("Process() result error = %v", results[0].Error)
+	}
+}
+
+func TestProcessItemWithNoCost(t *testing.T) {
+	out := &bytes.Buffer{}
+	proc := NewProcessor(
+		&mockProvider{
+			generateFunc: func(ctx context.Context, req *models.Request) (*models.Response, error) {
+				return &models.Response{
+					Images: []models.GeneratedImage{
+						{Data: []byte("test"), Index: 0},
+					},
+					Cost: nil, // No cost info
+				}, nil
+			},
+		},
+		image.NewSaver(),
+		models.DefaultRegistry(),
+		out,
+		out,
+	)
+
+	items := []Item{
+		{Index: 1, Prompt: "test"},
+	}
+
+	opts := &Options{
+		OutputDir:    t.TempDir(),
+		DefaultModel: "gpt-image-1",
+		Format:       models.FormatPNG,
+		Parallel:     1,
+	}
+
+	results, err := proc.Process(context.Background(), items, opts)
+	if err != nil {
+		t.Errorf("Process() error = %v", err)
+	}
+	if results[0].Cost != 0 {
+		t.Errorf("Expected zero cost, got %v", results[0].Cost)
 	}
 }
 
