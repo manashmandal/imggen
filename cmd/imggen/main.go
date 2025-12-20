@@ -1193,8 +1193,9 @@ func runKeysSet(app *App) error {
 	}
 
 	provider := "openai"
+	envVar := "OPENAI_API_KEY"
 
-	// Check if key already exists
+	// Check if key already exists in store
 	existing, _ := store.Get(provider)
 	if existing != "" {
 		fmt.Fprintf(app.Out, "Existing key for %s: %s\n", provider, keys.MaskKey(existing))
@@ -1209,26 +1210,41 @@ func runKeysSet(app *App) error {
 		}
 	}
 
-	// Prompt for key
-	fmt.Fprintf(app.Out, "Enter API key for %s: ", provider)
-
-	// Read key (hide input if terminal)
+	// Check if key exists in environment variable
 	var key string
-	if term.IsTerminal(int(os.Stdin.Fd())) {
-		keyBytes, err := term.ReadPassword(int(os.Stdin.Fd()))
-		if err != nil {
-			return fmt.Errorf("failed to read key: %w", err)
-		}
-		key = string(keyBytes)
-		fmt.Fprintln(app.Out, "") // newline after hidden input
-	} else {
+	if envKey := os.Getenv(envVar); envKey != "" {
+		fmt.Fprintf(app.Out, "Found %s in environment: %s\n", envVar, keys.MaskKey(envKey))
+		fmt.Fprint(app.Out, "Import this key? [Y/n] ")
+
 		reader := bufio.NewReader(os.Stdin)
-		key, _ = reader.ReadString('\n')
+		response, _ := reader.ReadString('\n')
+		response = strings.TrimSpace(strings.ToLower(response))
+		if response == "" || response == "y" || response == "yes" {
+			key = envKey
+		}
 	}
 
-	key = strings.TrimSpace(key)
+	// If not imported from env, prompt for key
 	if key == "" {
-		return fmt.Errorf("no key provided")
+		fmt.Fprintf(app.Out, "Enter API key for %s: ", provider)
+
+		// Read key (hide input if terminal)
+		if term.IsTerminal(int(os.Stdin.Fd())) {
+			keyBytes, err := term.ReadPassword(int(os.Stdin.Fd()))
+			if err != nil {
+				return fmt.Errorf("failed to read key: %w", err)
+			}
+			key = string(keyBytes)
+			fmt.Fprintln(app.Out, "") // newline after hidden input
+		} else {
+			reader := bufio.NewReader(os.Stdin)
+			key, _ = reader.ReadString('\n')
+		}
+
+		key = strings.TrimSpace(key)
+		if key == "" {
+			return fmt.Errorf("no key provided")
+		}
 	}
 
 	if err := store.Set(provider, key); err != nil {
