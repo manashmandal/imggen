@@ -41,6 +41,7 @@ type Processor struct {
 	registry *models.ModelRegistry
 	out      io.Writer
 	err      io.Writer
+	outMu    sync.Mutex
 }
 
 func NewProcessor(prov provider.Provider, saver *image.Saver, registry *models.ModelRegistry, out, errOut io.Writer) *Processor {
@@ -51,6 +52,18 @@ func NewProcessor(prov provider.Provider, saver *image.Saver, registry *models.M
 		out:      out,
 		err:      errOut,
 	}
+}
+
+func (p *Processor) printf(format string, args ...interface{}) {
+	p.outMu.Lock()
+	fmt.Fprintf(p.out, format, args...)
+	p.outMu.Unlock()
+}
+
+func (p *Processor) errorf(format string, args ...interface{}) {
+	p.outMu.Lock()
+	fmt.Fprintf(p.err, format, args...)
+	p.outMu.Unlock()
 }
 
 func (p *Processor) Process(ctx context.Context, items []Item, opts *Options) ([]Result, error) {
@@ -161,7 +174,7 @@ func (p *Processor) processItem(ctx context.Context, item Item, opts *Options, c
 	}
 
 	promptDisplay := truncate(item.Prompt, 50)
-	fmt.Fprintf(p.out, "[%d/%d] Generating: %q...\n", current, total, promptDisplay)
+	p.printf("[%d/%d] Generating: %q...\n", current, total, promptDisplay)
 
 	model := item.Model
 	if model == "" {
@@ -192,7 +205,7 @@ func (p *Processor) processItem(ctx context.Context, item Item, opts *Options, c
 	if !ok {
 		result.Error = fmt.Errorf("unknown model: %s", model)
 		result.Duration = time.Since(start)
-		fmt.Fprintf(p.err, "       Error: %v\n", result.Error)
+		p.errorf("       Error: %v\n", result.Error)
 		return result
 	}
 	caps.ApplyDefaults(req)
@@ -200,7 +213,7 @@ func (p *Processor) processItem(ctx context.Context, item Item, opts *Options, c
 	if err := caps.Validate(req); err != nil {
 		result.Error = fmt.Errorf("validation failed: %w", err)
 		result.Duration = time.Since(start)
-		fmt.Fprintf(p.err, "       Error: %v\n", result.Error)
+		p.errorf("       Error: %v\n", result.Error)
 		return result
 	}
 
@@ -208,7 +221,7 @@ func (p *Processor) processItem(ctx context.Context, item Item, opts *Options, c
 	if err != nil {
 		result.Error = fmt.Errorf("generation failed: %w", err)
 		result.Duration = time.Since(start)
-		fmt.Fprintf(p.err, "       Error: %v\n", result.Error)
+		p.errorf("       Error: %v\n", result.Error)
 		return result
 	}
 
@@ -219,7 +232,7 @@ func (p *Processor) processItem(ctx context.Context, item Item, opts *Options, c
 	if err != nil {
 		result.Error = fmt.Errorf("save failed: %w", err)
 		result.Duration = time.Since(start)
-		fmt.Fprintf(p.err, "       Error: %v\n", result.Error)
+		p.errorf("       Error: %v\n", result.Error)
 		return result
 	}
 
@@ -228,9 +241,9 @@ func (p *Processor) processItem(ctx context.Context, item Item, opts *Options, c
 
 	if resp.Cost != nil {
 		result.Cost = resp.Cost.Total
-		fmt.Fprintf(p.out, "       Saved: %s ($%.4f)\n", result.Path, result.Cost)
+		p.printf("       Saved: %s ($%.4f)\n", result.Path, result.Cost)
 	} else {
-		fmt.Fprintf(p.out, "       Saved: %s\n", result.Path)
+		p.printf("       Saved: %s\n", result.Path)
 	}
 
 	return result
