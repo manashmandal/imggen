@@ -249,14 +249,16 @@ imggen register rollback <backup-path>
 
 ### Supported Integrations
 
-| CLI | Config Location | Scope |
-|-----|-----------------|-------|
-| Claude Code | `~/.claude/skills/imggen/SKILL.md` | Global |
-| Codex CLI | `~/.codex/AGENTS.md` | Global |
-| Cursor | `.cursor/rules/imggen.mdc` | Project-local* |
-| Gemini CLI | `~/.gemini/GEMINI.md` | Global |
+| CLI | Config Location | Scope | Status |
+|-----|-----------------|-------|--------|
+| Claude Code | `~/.claude/skills/imggen/SKILL.md` | Global | ✅ Working |
+| Codex CLI | `~/.codex/AGENTS.md` | Global | ⚠️ Limited* |
+| Cursor | `.cursor/rules/imggen.mdc` | Project-local | ✅ Working |
+| Gemini CLI | `~/.gemini/GEMINI.md` | Global | ✅ Working |
 
-*\*Cursor note: Cursor rules are project-specific. Run `imggen register cursor` in each project where you want imggen available. The AI will only know about imggen when working in that project.*
+*\*Codex limitation: Codex CLI does not pass environment variables (like `OPENAI_API_KEY`) to subprocesses due to a [known bug](https://github.com/openai/codex/issues/6263). Workaround: provide your API key directly when prompted.*
+
+*Cursor note: Cursor rules are project-specific. Run `imggen register cursor` in each project where you want imggen available.*
 
 The command automatically:
 - Creates backups before modifying existing configs

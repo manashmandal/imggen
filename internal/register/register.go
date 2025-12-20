@@ -439,17 +439,15 @@ func (r *Registrar) convertToAgentsMD(skillContent string) string {
 
 	return fmt.Sprintf(`%s
 
-## Usage in Codex
+## Known Issue
 
-When the user asks to generate an image, use the imggen command.
+⚠️ **Codex CLI does not pass environment variables to subprocesses**, including OPENAI_API_KEY.
+This is a known bug: https://github.com/openai/codex/issues/6263
 
-**Important**: Due to Codex sandbox limitations, you must pass the API key explicitly:
-
+**Workaround**: Ask the user for their API key and pass it explicitly:
 `+"```bash"+`
-imggen --api-key "$OPENAI_API_KEY" "your prompt here"
+imggen --api-key "USER_PROVIDED_KEY" "your prompt here"
 `+"```"+`
-
-If the environment variable is not available, ask the user to provide their API key.
 `, content)
 }
 
