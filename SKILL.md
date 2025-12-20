@@ -34,10 +34,12 @@ imggen [flags] "prompt"
 | `--size` | `-s` | `1024x1024` | Image dimensions |
 | `--quality` | `-q` | `auto` | Quality level |
 | `--count` | `-n` | `1` | Number of images (1-10 for gpt-image-1, 1 for dall-e-3) |
-| `--output` | `-o` | auto-generated | Output filename |
+| `--output` | `-o` | auto-generated | Output filename or directory |
 | `--format` | `-f` | `png` | Output format: png, jpeg, webp |
 | `--style` | | `vivid` | Style for dall-e-3: vivid, natural |
 | `--transparent` | `-t` | `false` | Transparent background (gpt-image-1 + png/webp only) |
+| `--prompt` | `-P` | | Prompt (can be specified multiple times) |
+| `--parallel` | `-p` | `1` | Number of parallel workers for multiple prompts |
 | `--api-key` | | `$OPENAI_API_KEY` | Override API key |
 
 ## Model-Specific Parameters
@@ -154,6 +156,80 @@ imggen -o hero-image.png "website hero banner with gradient"
 ```bash
 imggen -m dall-e-3 --style natural "professional headshot, studio lighting"
 ```
+
+### Multiple prompts via command line
+```bash
+# Generate multiple images with --prompt flag
+imggen --prompt "a sunset" --prompt "a cat" --prompt "a dog" -o ./output
+
+# Short form with parallel processing (3 workers)
+imggen -P "sunset" -P "mountains" -P "ocean" -o ./images -p 3
+```
+
+### Batch generation from file
+```bash
+# From a text file (one prompt per line)
+imggen batch prompts.txt -o ./output
+
+# From a JSON file with per-prompt options
+imggen batch prompts.json -o ./output
+
+# With parallel processing
+imggen batch prompts.txt -o ./output -p 3
+```
+
+## Multiple Prompts
+
+Generate multiple images from command-line prompts using the `--prompt/-P` flag:
+
+```bash
+imggen --prompt "a sunset over mountains" --prompt "a cat playing piano" -o ./output
+```
+
+This processes all prompts and saves images to the output directory with indexed filenames:
+- `001-a-sunset-over-mountains.png`
+- `002-a-cat-playing-piano.png`
+
+Use `--parallel/-p` to control concurrent processing (default: 1 = sequential).
+
+## Batch Generation
+
+Generate multiple images from a file of prompts using the `batch` subcommand:
+
+```bash
+imggen batch <input-file> [flags]
+```
+
+### Input File Formats
+
+**Text file (.txt)** - One prompt per line (lines starting with `#` are ignored):
+```
+a sunset over mountains
+a cat playing piano
+abstract geometric art
+```
+
+**JSON file (.json)** - Array of objects with optional per-prompt settings:
+```json
+[
+  {"prompt": "a sunset over mountains"},
+  {"prompt": "a cat playing piano", "model": "dall-e-3", "quality": "hd"},
+  {"prompt": "abstract art", "size": "1792x1024"}
+]
+```
+
+### Batch Flags
+
+| Flag | Short | Default | Description |
+|------|-------|---------|-------------|
+| `--output` | `-o` | current dir | Output directory |
+| `--model` | `-m` | `gpt-image-1` | Default model |
+| `--size` | `-s` | model default | Default image size |
+| `--quality` | `-q` | model default | Default quality level |
+| `--format` | `-f` | `png` | Output format |
+| `--parallel` | `-p` | `1` | Number of parallel workers |
+| `--stop-on-error` | | `false` | Stop on first error |
+| `--delay` | | `0` | Delay between requests (ms) |
 
 ## Error Handling
 
