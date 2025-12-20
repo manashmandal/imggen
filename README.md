@@ -8,6 +8,16 @@
 
 > **Note:** Currently only OpenAI is supported. Other providers (Stability AI, etc.) are work in progress.
 
+## Sample Generated Images
+
+Images generated using `imggen` via different AI coding assistants:
+
+<p align="center">
+  <img src="docs/images/claude-opus-4-5.jpg" width="250" alt="Generated via Claude">
+  <img src="docs/images/gemini-3-pro-preview.jpg" width="250" alt="Generated via Gemini">
+  <img src="docs/images/grok-code.jpg" width="250" alt="Generated via Grok">
+</p>
+
 ## Installation
 
 ### Homebrew (macOS/Linux)
@@ -264,6 +274,29 @@ The command automatically:
 - Creates backups before modifying existing configs
 - Asks for confirmation before changes
 - Detects if already registered (use `--force` to overwrite)
+
+### Integration Screenshots
+
+<details>
+<summary>Click to view screenshots</summary>
+
+**Claude Code generating an image:**
+
+<img src="docs/images/imggen-usage-claude.png" width="600" alt="imggen usage in Claude">
+
+**Gemini CLI registration:**
+
+<img src="docs/images/gemini-cli-registration.png" width="600" alt="Gemini CLI registration">
+
+**Cursor with Grok integration:**
+
+<img src="docs/images/cursor-grok-integration.png" width="600" alt="Cursor Grok integration">
+
+**Codex CLI integration:**
+
+<img src="docs/images/codex-integration.png" width="600" alt="Codex CLI integration">
+
+</details>
 
 ## API Key Management
 
