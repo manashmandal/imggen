@@ -208,12 +208,12 @@ func TestRunGenerate_APIKeyFromEnv(t *testing.T) {
 	resetFlags()
 	out := &bytes.Buffer{}
 	app := newTestApp(out)
-	app.GetEnv = func(key string) string {
-		if key == "OPENAI_API_KEY" {
-			return "env-api-key"
-		}
-		return ""
-	}
+
+	// Use empty config dir so no stored key is found
+	configDir := t.TempDir()
+	t.Setenv("IMGGEN_CONFIG_DIR", configDir)
+	// Set the actual env var (keys.GetAPIKey uses os.Getenv directly)
+	t.Setenv("OPENAI_API_KEY", "env-api-key")
 
 	tmpDir := t.TempDir()
 	oldWd, _ := os.Getwd()
