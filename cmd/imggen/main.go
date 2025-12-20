@@ -1,17 +1,21 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 
+	"github.com/manash/imggen/internal/batch"
 	"github.com/manash/imggen/internal/display"
 	"github.com/manash/imggen/internal/image"
 	"github.com/manash/imggen/internal/provider"
@@ -39,6 +43,19 @@ var (
 	flagShow        bool
 	flagInteractive bool
 	flagVerbose     bool
+	flagPrompts     []string
+	flagParallel    int
+)
+
+var (
+	flagBatchOutput      string
+	flagBatchModel       string
+	flagBatchSize        string
+	flagBatchQuality     string
+	flagBatchFormat      string
+	flagBatchParallel    int
+	flagBatchStopOnError bool
+	flagBatchDelay       int
 )
 
 type App struct {
@@ -93,9 +110,13 @@ Examples:
   imggen "a sunset over mountains"
   imggen -m dall-e-3 -s 1792x1024 -q hd "panoramic cityscape"
   imggen -m gpt-image-1 -n 3 --transparent "logo design"
+  imggen --prompt "a sunset" --prompt "a cat" -o ./output
   imggen -i  # start interactive mode`,
 		Args: func(cmd *cobra.Command, args []string) error {
 			if flagInteractive {
+				return nil
+			}
+			if len(flagPrompts) > 0 {
 				return nil
 			}
 			return cobra.ExactArgs(1)(cmd, args)
@@ -113,7 +134,7 @@ Examples:
 	cmd.Flags().StringVarP(&flagSize, "size", "s", "", "image size (e.g., 1024x1024)")
 	cmd.Flags().StringVarP(&flagQuality, "quality", "q", "", "quality level")
 	cmd.Flags().IntVarP(&flagCount, "count", "n", 1, "number of images to generate")
-	cmd.Flags().StringVarP(&flagOutput, "output", "o", "", "output filename")
+	cmd.Flags().StringVarP(&flagOutput, "output", "o", "", "output filename or directory (directory when using --prompt)")
 	cmd.Flags().StringVarP(&flagFormat, "format", "f", "png", "output format (png, jpeg, webp)")
 	cmd.Flags().StringVar(&flagStyle, "style", "", "style for dall-e-3 (vivid, natural)")
 	cmd.Flags().BoolVarP(&flagTransparent, "transparent", "t", false, "transparent background (gpt-image-1 only)")
@@ -121,9 +142,12 @@ Examples:
 	cmd.Flags().BoolVarP(&flagShow, "show", "S", false, "display image in terminal (Kitty graphics protocol)")
 	cmd.Flags().BoolVarP(&flagInteractive, "interactive", "i", false, "start interactive editing mode")
 	cmd.Flags().BoolVarP(&flagVerbose, "verbose", "v", false, "log HTTP requests and responses (API keys redacted)")
+	cmd.Flags().StringArrayVarP(&flagPrompts, "prompt", "P", nil, "prompt for image generation (can be specified multiple times)")
+	cmd.Flags().IntVarP(&flagParallel, "parallel", "p", 1, "number of parallel workers for multiple prompts")
 
 	cmd.AddCommand(newCostCmd(app))
 	cmd.AddCommand(newDBCmd(app))
+	cmd.AddCommand(newBatchCmd(app))
 
 	return cmd
 }
@@ -238,8 +262,6 @@ func runGenerate(_ *cobra.Command, args []string, app *App) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	prompt := args[0]
-
 	apiKey := flagAPIKey
 	if apiKey == "" {
 		apiKey = app.GetEnv("OPENAI_API_KEY")
@@ -252,6 +274,14 @@ func runGenerate(_ *cobra.Command, args []string, app *App) error {
 	if !format.IsValid() {
 		return fmt.Errorf("invalid format %q: must be one of %v", flagFormat, models.ValidFormats())
 	}
+
+	// Handle multiple prompts via --prompt flag
+	if len(flagPrompts) > 0 {
+		return runMultiPrompt(ctx, app, apiKey, format)
+	}
+
+	// Single prompt mode (positional argument)
+	prompt := args[0]
 
 	req := models.NewRequest(prompt)
 	req.Model = flagModel
@@ -335,6 +365,107 @@ func runGenerate(_ *cobra.Command, args []string, app *App) error {
 	}
 
 	fmt.Fprintln(app.Out, "Done!")
+	return nil
+}
+
+func runMultiPrompt(ctx context.Context, app *App, apiKey string, format models.OutputFormat) error {
+	outputDir := flagOutput
+	if outputDir == "" {
+		outputDir = "."
+		fmt.Fprintln(app.Out, "\033[33mWarning: No output directory specified. Images will be saved to current directory.\033[0m")
+
+		if isTerminal() {
+			fmt.Fprint(app.Out, "Continue? [Y/n] ")
+			reader := bufio.NewReader(os.Stdin)
+			response, _ := reader.ReadString('\n')
+			response = strings.TrimSpace(strings.ToLower(response))
+			if response == "n" || response == "no" {
+				fmt.Fprintln(app.Out, "Aborted.")
+				return nil
+			}
+		}
+	} else {
+		if _, err := os.Stat(outputDir); os.IsNotExist(err) {
+			if isTerminal() {
+				fmt.Fprintf(app.Out, "Directory %q does not exist. Create it? [Y/n] ", outputDir)
+				reader := bufio.NewReader(os.Stdin)
+				response, _ := reader.ReadString('\n')
+				response = strings.TrimSpace(strings.ToLower(response))
+				if response == "n" || response == "no" {
+					fmt.Fprintln(app.Out, "Aborted.")
+					return nil
+				}
+			}
+			if err := os.MkdirAll(outputDir, 0755); err != nil {
+				return fmt.Errorf("failed to create output directory: %w", err)
+			}
+			fmt.Fprintf(app.Out, "Created directory: %s\n", outputDir)
+		}
+	}
+
+	items := make([]batch.Item, len(flagPrompts))
+	for i, prompt := range flagPrompts {
+		items[i] = batch.Item{
+			Index:  i + 1,
+			Prompt: prompt,
+		}
+	}
+
+	fmt.Fprintf(app.Out, "Generating %d images with %s\n", len(items), flagModel)
+	fmt.Fprintf(app.Out, "Output directory: %s\n\n", outputDir)
+
+	providerCfg := &provider.Config{APIKey: apiKey, Verbose: flagVerbose}
+	prov, err := app.NewProvider(providerCfg, app.Registry)
+	if err != nil {
+		return fmt.Errorf("failed to create provider: %w", err)
+	}
+
+	processor := batch.NewProcessor(prov, app.NewSaver(), app.Registry, app.Out, app.Err)
+
+	opts := &batch.Options{
+		OutputDir:      outputDir,
+		DefaultModel:   flagModel,
+		DefaultSize:    flagSize,
+		DefaultQuality: flagQuality,
+		Format:         format,
+		Parallel:       flagParallel,
+		StopOnError:    false,
+		DelayMs:        0,
+	}
+
+	results, err := processor.Process(ctx, items, opts)
+
+	processor.PrintSummary(results)
+
+	if err != nil {
+		return err
+	}
+
+	var totalCost float64
+	for _, r := range results {
+		if r.Error == nil {
+			totalCost += r.Cost
+		}
+	}
+	if totalCost > 0 {
+		store, storeErr := session.NewStore()
+		if storeErr == nil {
+			defer store.Close()
+			costEntry := &session.CostEntry{
+				IterationID: "",
+				SessionID:   "",
+				Provider:    string(prov.Name()),
+				Model:       flagModel,
+				Cost:        totalCost,
+				ImageCount:  countSuccessful(results),
+				Timestamp:   time.Now(),
+			}
+			if logErr := store.LogCost(ctx, costEntry); logErr != nil {
+				fmt.Fprintf(app.Err, "Warning: failed to log cost: %v\n", logErr)
+			}
+		}
+	}
+
 	return nil
 }
 
@@ -510,4 +641,170 @@ var getDBPath = func() (string, error) {
 		return "", fmt.Errorf("failed to get home directory: %w", err)
 	}
 	return filepath.Join(homeDir, ".imggen", "sessions.db"), nil
+}
+
+func newBatchCmd(app *App) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "batch <input-file>",
+		Short: "Generate images in batch from a file",
+		Long: `Generate multiple images from a file containing prompts.
+
+Input formats:
+  .txt - One prompt per line (lines starting with # are ignored)
+  .json - JSON array of objects with prompt/model/size/quality fields
+
+Examples:
+  imggen batch prompts.txt
+  imggen batch prompts.txt -o ./output
+  imggen batch prompts.json -o ./output -p 3
+  imggen batch prompts.txt -o ./output -m dall-e-3 -q hd`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runBatch(cmd, args, app)
+		},
+	}
+
+	cmd.Flags().StringVarP(&flagBatchOutput, "output", "o", "", "output directory for generated images")
+	cmd.Flags().StringVarP(&flagBatchModel, "model", "m", "gpt-image-1", "default model for prompts without model specified")
+	cmd.Flags().StringVarP(&flagBatchSize, "size", "s", "", "default image size")
+	cmd.Flags().StringVarP(&flagBatchQuality, "quality", "q", "", "default quality level")
+	cmd.Flags().StringVarP(&flagBatchFormat, "format", "f", "png", "output format (png, jpeg, webp)")
+	cmd.Flags().IntVarP(&flagBatchParallel, "parallel", "p", 1, "number of parallel workers (1 = sequential)")
+	cmd.Flags().BoolVar(&flagBatchStopOnError, "stop-on-error", false, "stop batch on first error")
+	cmd.Flags().IntVar(&flagBatchDelay, "delay", 0, "delay between requests in milliseconds")
+	cmd.Flags().StringVar(&flagAPIKey, "api-key", "", "API key (defaults to OPENAI_API_KEY)")
+	cmd.Flags().BoolVarP(&flagVerbose, "verbose", "v", false, "log HTTP requests and responses")
+
+	return cmd
+}
+
+func runBatch(_ *cobra.Command, args []string, app *App) error {
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
+
+	inputFile := args[0]
+
+	apiKey := flagAPIKey
+	if apiKey == "" {
+		apiKey = app.GetEnv("OPENAI_API_KEY")
+	}
+	if apiKey == "" {
+		return fmt.Errorf("API key required: set OPENAI_API_KEY or use --api-key")
+	}
+
+	format := models.OutputFormat(flagBatchFormat)
+	if !format.IsValid() {
+		return fmt.Errorf("invalid format %q: must be one of %v", flagBatchFormat, models.ValidFormats())
+	}
+
+	items, err := batch.ParseFile(inputFile)
+	if err != nil {
+		return fmt.Errorf("failed to parse input file: %w", err)
+	}
+
+	fmt.Fprintf(app.Out, "Batch generation: %d prompts\n", len(items))
+
+	outputDir := flagBatchOutput
+	if outputDir == "" {
+		outputDir = "."
+		fmt.Fprintln(app.Out, "\033[33mWarning: No output directory specified. Images will be saved to current directory.\033[0m")
+
+		if isTerminal() {
+			fmt.Fprint(app.Out, "Continue? [Y/n] ")
+			reader := bufio.NewReader(os.Stdin)
+			response, _ := reader.ReadString('\n')
+			response = strings.TrimSpace(strings.ToLower(response))
+			if response == "n" || response == "no" {
+				fmt.Fprintln(app.Out, "Aborted.")
+				return nil
+			}
+		}
+	} else {
+		if _, err := os.Stat(outputDir); os.IsNotExist(err) {
+			if isTerminal() {
+				fmt.Fprintf(app.Out, "Directory %q does not exist. Create it? [Y/n] ", outputDir)
+				reader := bufio.NewReader(os.Stdin)
+				response, _ := reader.ReadString('\n')
+				response = strings.TrimSpace(strings.ToLower(response))
+				if response == "n" || response == "no" {
+					fmt.Fprintln(app.Out, "Aborted.")
+					return nil
+				}
+			}
+			if err := os.MkdirAll(outputDir, 0755); err != nil {
+				return fmt.Errorf("failed to create output directory: %w", err)
+			}
+			fmt.Fprintf(app.Out, "Created directory: %s\n", outputDir)
+		}
+	}
+
+	fmt.Fprintf(app.Out, "Output directory: %s\n\n", outputDir)
+
+	providerCfg := &provider.Config{APIKey: apiKey, Verbose: flagVerbose}
+	prov, err := app.NewProvider(providerCfg, app.Registry)
+	if err != nil {
+		return fmt.Errorf("failed to create provider: %w", err)
+	}
+
+	processor := batch.NewProcessor(prov, app.NewSaver(), app.Registry, app.Out, app.Err)
+
+	opts := &batch.Options{
+		OutputDir:      outputDir,
+		DefaultModel:   flagBatchModel,
+		DefaultSize:    flagBatchSize,
+		DefaultQuality: flagBatchQuality,
+		Format:         format,
+		Parallel:       flagBatchParallel,
+		StopOnError:    flagBatchStopOnError,
+		DelayMs:        flagBatchDelay,
+	}
+
+	results, err := processor.Process(ctx, items, opts)
+
+	processor.PrintSummary(results)
+
+	if err != nil {
+		return err
+	}
+
+	var totalCost float64
+	for _, r := range results {
+		if r.Error == nil {
+			totalCost += r.Cost
+		}
+	}
+	if totalCost > 0 {
+		store, storeErr := session.NewStore()
+		if storeErr == nil {
+			defer store.Close()
+			costEntry := &session.CostEntry{
+				IterationID: "",
+				SessionID:   "",
+				Provider:    string(prov.Name()),
+				Model:       flagBatchModel,
+				Cost:        totalCost,
+				ImageCount:  countSuccessful(results),
+				Timestamp:   time.Now(),
+			}
+			if logErr := store.LogCost(ctx, costEntry); logErr != nil {
+				fmt.Fprintf(app.Err, "Warning: failed to log cost: %v\n", logErr)
+			}
+		}
+	}
+
+	return nil
+}
+
+func isTerminal() bool {
+	return term.IsTerminal(int(os.Stdin.Fd()))
+}
+
+func countSuccessful(results []batch.Result) int {
+	count := 0
+	for _, r := range results {
+		if r.Error == nil {
+			count++
+		}
+	}
+	return count
 }

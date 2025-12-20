@@ -36,6 +36,10 @@ imggen "a sunset over mountains"
 imggen -m dall-e-3 -s 1792x1024 -q hd "panoramic cityscape"
 imggen -m gpt-image-1 -n 3 --transparent "logo design"
 
+# Multiple prompts (generates images concurrently)
+imggen --prompt "a sunset" --prompt "a cat" --prompt "a dog" -o ./output
+imggen -P "sunset" -P "mountains" -p 3 -o ./images  # -p 3 = 3 parallel workers
+
 # Display image in terminal (requires supported terminal)
 imggen -S "a cute cat"
 
@@ -66,6 +70,64 @@ Commands:
 
 Sessions and costs are persisted in `~/.imggen/sessions.db`.
 
+## Batch Generation
+
+Generate multiple images from a file of prompts:
+
+```bash
+# From a text file (one prompt per line)
+imggen batch prompts.txt -o ./output
+
+# From a JSON file with per-prompt options
+imggen batch prompts.json -o ./output
+
+# With parallel processing (3 workers)
+imggen batch prompts.txt -o ./output -p 3
+
+# Override model/quality for all prompts
+imggen batch prompts.txt -o ./output -m dall-e-3 -q hd
+```
+
+### Input File Formats
+
+**Text file (.txt)** - One prompt per line (lines starting with `#` are ignored):
+```
+a sunset over mountains
+a cat playing piano
+abstract geometric art
+```
+
+**JSON file (.json)** - Array of objects with optional per-prompt settings:
+```json
+[
+  {"prompt": "a sunset over mountains"},
+  {"prompt": "a cat playing piano", "model": "dall-e-3", "quality": "hd"},
+  {"prompt": "abstract art", "size": "1792x1024"}
+]
+```
+
+### Batch Flags
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--output` | `-o` | Output directory | current dir (with warning) |
+| `--model` | `-m` | Default model | gpt-image-1 |
+| `--size` | `-s` | Default image size | model default |
+| `--quality` | `-q` | Default quality level | model default |
+| `--format` | `-f` | Output format (png, jpeg, webp) | png |
+| `--parallel` | `-p` | Number of parallel workers | 1 (sequential) |
+| `--stop-on-error` | | Stop on first error | false |
+| `--delay` | | Delay between requests (ms) | 0 |
+
+### Output
+
+Images are saved with indexed filenames based on the prompt:
+```
+output/001-a-sunset-over-mountains.png
+output/002-a-cat-playing-piano.png
+output/003-abstract-geometric-art.png
+```
+
 ## Flags
 
 | Flag | Short | Description | Default |
@@ -74,10 +136,12 @@ Sessions and costs are persisted in `~/.imggen/sessions.db`.
 | `--size` | `-s` | Image size (e.g., 1024x1024) | model default |
 | `--quality` | `-q` | Quality level | model default |
 | `--count` | `-n` | Number of images | 1 |
-| `--output` | `-o` | Output filename | auto-generated |
+| `--output` | `-o` | Output filename or directory | auto-generated |
 | `--format` | `-f` | Output format (png, jpeg, webp) | png |
 | `--style` | | Style for dall-e-3 (vivid, natural) | |
 | `--transparent` | `-t` | Transparent background (gpt-image-1 only) | false |
+| `--prompt` | `-P` | Prompt (can be specified multiple times) | |
+| `--parallel` | `-p` | Number of parallel workers for multiple prompts | 1 |
 | `--api-key` | | API key (defaults to OPENAI_API_KEY env var) | |
 | `--show` | `-S` | Display image in terminal | false |
 | `--interactive` | `-i` | Start interactive mode | false |
