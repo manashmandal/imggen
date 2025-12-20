@@ -249,12 +249,14 @@ imggen register rollback <backup-path>
 
 ### Supported Integrations
 
-| CLI | Config Location | Description |
-|-----|-----------------|-------------|
-| Claude Code | `~/.claude/skills/imggen/SKILL.md` | Anthropic's CLI |
-| Codex CLI | `~/.codex/AGENTS.md` | OpenAI's CLI |
-| Cursor | `~/.cursor/rules/imggen.mdc` | Cursor AI editor |
-| Gemini CLI | `~/.gemini/GEMINI.md` | Google's CLI |
+| CLI | Config Location | Scope |
+|-----|-----------------|-------|
+| Claude Code | `~/.claude/skills/imggen/SKILL.md` | Global |
+| Codex CLI | `~/.codex/AGENTS.md` | Global |
+| Cursor | `.cursor/rules/imggen.mdc` | Project-local* |
+| Gemini CLI | `~/.gemini/GEMINI.md` | Global |
+
+*\*Cursor note: Cursor rules are project-specific. Run `imggen register cursor` in each project where you want imggen available. The AI will only know about imggen when working in that project.*
 
 The command automatically:
 - Creates backups before modifying existing configs

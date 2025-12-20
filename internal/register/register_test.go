@@ -67,15 +67,20 @@ func TestIntegration_ConfigPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to get home dir: %v", err)
 	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get cwd: %v", err)
+	}
 
 	tests := []struct {
 		i       Integration
 		wantEnd string
+		base    string // homeDir or cwd
 	}{
-		{Claude, filepath.Join(".claude", "skills", "imggen", "SKILL.md")},
-		{Codex, filepath.Join(".codex", "AGENTS.md")},
-		{Cursor, filepath.Join(".cursor", "rules", "imggen.mdc")},
-		{Gemini, filepath.Join(".gemini", "GEMINI.md")},
+		{Claude, filepath.Join(".claude", "skills", "imggen", "SKILL.md"), homeDir},
+		{Codex, filepath.Join(".codex", "AGENTS.md"), homeDir},
+		{Cursor, filepath.Join(".cursor", "rules", "imggen.mdc"), cwd}, // project-local
+		{Gemini, filepath.Join(".gemini", "GEMINI.md"), homeDir},
 	}
 
 	for _, tt := range tests {
@@ -84,7 +89,7 @@ func TestIntegration_ConfigPath(t *testing.T) {
 			t.Errorf("Integration(%s).ConfigPath() error = %v", tt.i, err)
 			continue
 		}
-		want := filepath.Join(homeDir, tt.wantEnd)
+		want := filepath.Join(tt.base, tt.wantEnd)
 		if got != want {
 			t.Errorf("Integration(%s).ConfigPath() = %v, want %v", tt.i, got, want)
 		}
@@ -242,12 +247,12 @@ func TestExtractMarkdownContent(t *testing.T) {
 
 func TestRegistrar_convertToAgentsMD(t *testing.T) {
 	r := &Registrar{}
-	skillContent := "---\nname: imggen\n---\n\n# imggen\nTest content"
+	skillContent := "---\nname: imggen\n---\n\n# imggen - Test Tool\nTest content"
 
 	got := r.convertToAgentsMD(skillContent)
 
-	if !strings.Contains(got, "# imggen") {
-		t.Error("convertToAgentsMD() should contain # imggen header")
+	if !strings.Contains(got, "# imggen - Test Tool") {
+		t.Error("convertToAgentsMD() should preserve the original header")
 	}
 	if !strings.Contains(got, "Test content") {
 		t.Error("convertToAgentsMD() should contain the content")
@@ -255,11 +260,15 @@ func TestRegistrar_convertToAgentsMD(t *testing.T) {
 	if !strings.Contains(got, "imggen \"your prompt here\"") {
 		t.Error("convertToAgentsMD() should contain example usage")
 	}
+	// Should NOT have duplicate headers
+	if strings.Count(got, "# imggen") > 1 {
+		t.Error("convertToAgentsMD() should not have duplicate headers")
+	}
 }
 
 func TestRegistrar_convertToCursorMDC(t *testing.T) {
 	r := &Registrar{}
-	skillContent := "---\nname: imggen\n---\n\n# imggen\nTest content"
+	skillContent := "---\nname: imggen\n---\n\n# imggen - Test Tool\nTest content"
 
 	got := r.convertToCursorMDC(skillContent)
 
@@ -271,6 +280,10 @@ func TestRegistrar_convertToCursorMDC(t *testing.T) {
 	}
 	if !strings.Contains(got, "Test content") {
 		t.Error("convertToCursorMDC() should contain the content")
+	}
+	// Should NOT have duplicate headers
+	if strings.Count(got, "# imggen") > 1 {
+		t.Error("convertToCursorMDC() should not have duplicate headers")
 	}
 }
 

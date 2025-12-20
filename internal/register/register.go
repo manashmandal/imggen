@@ -61,7 +61,13 @@ func (i Integration) ConfigPath() (string, error) {
 	case Codex:
 		return filepath.Join(homeDir, ".codex", "AGENTS.md"), nil
 	case Cursor:
-		return filepath.Join(homeDir, ".cursor", "rules", "imggen.mdc"), nil
+		// Cursor rules are project-local, not global
+		// Use current working directory
+		cwd, err := os.Getwd()
+		if err != nil {
+			return "", fmt.Errorf("failed to get current directory: %w", err)
+		}
+		return filepath.Join(cwd, ".cursor", "rules", "imggen.mdc"), nil
 	case Gemini:
 		return filepath.Join(homeDir, ".gemini", "GEMINI.md"), nil
 	default:
@@ -77,7 +83,7 @@ func (i Integration) Description() string {
 	case Codex:
 		return "~/.codex/AGENTS.md (appends imggen section)"
 	case Cursor:
-		return "~/.cursor/rules/imggen.mdc"
+		return ".cursor/rules/imggen.mdc (project-local)"
 	case Gemini:
 		return "~/.gemini/GEMINI.md (appends imggen section)"
 	default:
@@ -403,12 +409,10 @@ func (r *Registrar) removeExistingSection(integration Integration, content strin
 }
 
 func (r *Registrar) convertToAgentsMD(skillContent string) string {
-	// Extract content after frontmatter
+	// Extract content after frontmatter (already includes header)
 	content := extractMarkdownContent(skillContent)
 
-	return fmt.Sprintf(`# imggen - AI Image Generation CLI
-
-%s
+	return fmt.Sprintf(`%s
 
 When the user asks to generate an image, use the imggen command. Example:
 `+"```bash"+`
@@ -418,6 +422,7 @@ imggen "your prompt here"
 }
 
 func (r *Registrar) convertToCursorMDC(skillContent string) string {
+	// Extract content after frontmatter (already includes header)
 	content := extractMarkdownContent(skillContent)
 
 	return fmt.Sprintf(`---
@@ -426,19 +431,14 @@ globs:
 alwaysApply: true
 ---
 
-# imggen - AI Image Generation CLI
-
 %s
 `, content)
 }
 
 func (r *Registrar) convertToGeminiMD(skillContent string) string {
+	// Extract content after frontmatter (already includes header)
 	content := extractMarkdownContent(skillContent)
-
-	return fmt.Sprintf(`# imggen - AI Image Generation CLI
-
-%s
-`, content)
+	return content
 }
 
 func extractMarkdownContent(skillContent string) string {
