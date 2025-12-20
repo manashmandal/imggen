@@ -8,6 +8,16 @@
 
 > **Note:** Currently only OpenAI is supported. Other providers (Stability AI, etc.) are work in progress.
 
+## Sample Generated Images
+
+Images generated using `imggen` via different AI coding assistants:
+
+<p align="center">
+  <img src="docs/images/claude-opus-4-5.jpg" width="250" alt="Generated via Claude">
+  <img src="docs/images/gemini-3-pro-preview.jpg" width="250" alt="Generated via Gemini">
+  <img src="docs/images/grok-code.jpg" width="250" alt="Generated via Grok">
+</p>
+
 ## Installation
 
 ### Homebrew (macOS/Linux)
@@ -217,11 +227,115 @@ imggen db reset
 imggen db reset --backup
 ```
 
-## Environment Variables
+## AI CLI Integration
+
+Register imggen with AI coding assistants so they know how to use it:
 
 ```bash
-export OPENAI_API_KEY="your-api-key"
+# Show available integrations and status
+imggen register
+
+# Register with all supported AI CLIs
+imggen register --all
+
+# Register with specific CLIs
+imggen register claude codex
+
+# Preview changes without modifying files
+imggen register --dry-run --all
+
+# Check registration status
+imggen register status
+
+# Remove registration
+imggen register unregister claude
+
+# List backups for an integration
+imggen register backups claude
+
+# Restore from backup
+imggen register rollback <backup-path>
 ```
+
+### Supported Integrations
+
+| CLI | Config Location | Scope | Status |
+|-----|-----------------|-------|--------|
+| Claude Code | `~/.claude/skills/imggen/SKILL.md` | Global | ✅ Working |
+| Codex CLI | `~/.codex/AGENTS.md` | Global | ⚠️ Limited* |
+| Cursor | `.cursor/rules/imggen.mdc` | Project-local | ✅ Working |
+| Gemini CLI | `~/.gemini/GEMINI.md` | Global | ✅ Working |
+
+*\*Codex limitation: Codex CLI does not pass environment variables (like `OPENAI_API_KEY`) to subprocesses due to a [known bug](https://github.com/openai/codex/issues/6263). Workaround: run `imggen keys set` to store your API key locally.*
+
+*Cursor note: Cursor rules are project-specific. Run `imggen register cursor` in each project where you want imggen available.*
+
+The command automatically:
+- Creates backups before modifying existing configs
+- Asks for confirmation before changes
+- Detects if already registered (use `--force` to overwrite)
+
+### Integration Screenshots
+
+<details>
+<summary>Click to view screenshots</summary>
+
+**Claude Code generating an image:**
+
+<img src="docs/images/imggen-usage-claude.png" width="600" alt="imggen usage in Claude">
+
+**Gemini CLI registration:**
+
+<img src="docs/images/gemini-cli-registration.png" width="600" alt="Gemini CLI registration">
+
+**Cursor with Grok integration:**
+
+<img src="docs/images/cursor-grok-integration.png" width="600" alt="Cursor Grok integration">
+
+**Codex CLI integration:**
+
+<img src="docs/images/codex-integration.png" width="600" alt="Codex CLI integration">
+
+</details>
+
+## API Key Management
+
+imggen supports multiple ways to provide your OpenAI API key:
+
+```bash
+# Option 1: Store key locally (recommended for CLI tools that don't pass env vars)
+imggen keys set
+# Enter your API key when prompted - it's stored securely in ~/.config/imggen/keys.json
+
+# Option 2: Environment variable
+export OPENAI_API_KEY="your-api-key"
+
+# Option 3: Pass directly via flag
+imggen --api-key "your-key" "prompt"
+```
+
+### Key Lookup Priority
+
+1. `--api-key` flag (highest priority)
+2. Stored key in `~/.config/imggen/keys.json`
+3. `OPENAI_API_KEY` environment variable
+
+### Key Management Commands
+
+```bash
+imggen keys          # List stored keys
+imggen keys set      # Save a new key (prompts for input)
+imggen keys path     # Show keys.json location
+imggen keys delete   # Remove stored key
+```
+
+### Storage Location
+
+| Platform | Path |
+|----------|------|
+| Linux | `~/.config/imggen/keys.json` |
+| macOS | `~/Library/Application Support/imggen/keys.json` |
+| Windows | `%APPDATA%\imggen\keys.json` |
 
 ## License
 
