@@ -179,6 +179,23 @@ func (r *Registrar) registerOne(integration Integration) Result {
 	// Show what will happen
 	r.showPreview(integration, configPath, content, result.WasExisting)
 
+	// For Codex, show env config warning early (even in dry-run)
+	if integration == Codex {
+		needsEnvConfig, _ := r.codexNeedsEnvConfig()
+		if needsEnvConfig {
+			fmt.Fprintln(r.Out, "")
+			fmt.Fprintln(r.Out, "  ⚠️  Codex Environment Configuration Required")
+			fmt.Fprintln(r.Out, "  ────────────────────────────────────────────")
+			fmt.Fprintln(r.Out, "  imggen requires OPENAI_API_KEY environment variable.")
+			fmt.Fprintln(r.Out, "  Codex's sandbox doesn't pass env vars by default.")
+			fmt.Fprintln(r.Out, "")
+			fmt.Fprintln(r.Out, "  Will add to ~/.codex/config.toml:")
+			fmt.Fprintln(r.Out, "    [shell_environment_policy]")
+			fmt.Fprintln(r.Out, "    inherit = \"all\"")
+			fmt.Fprintln(r.Out, "")
+		}
+	}
+
 	// Ask for confirmation
 	if !r.DryRun && !r.confirm(fmt.Sprintf("Register imggen with %s?", integration.DisplayName())) {
 		result.WasSkipped = true
@@ -208,6 +225,14 @@ func (r *Registrar) registerOne(integration Integration) Result {
 	if err := r.writeConfig(integration, configPath, content, existingContent); err != nil {
 		result.Error = fmt.Errorf("failed to write config: %w", err)
 		return result
+	}
+
+	// Handle Codex-specific config.toml for environment variables
+	if integration == Codex {
+		if err := r.handleCodexEnvConfig(); err != nil {
+			result.Error = fmt.Errorf("failed to update Codex config: %w", err)
+			return result
+		}
 	}
 
 	result.Success = true
@@ -602,4 +627,97 @@ func (r *Registrar) Unregister(integration Integration) error {
 
 	fmt.Fprintf(r.Out, "  ✓ Unregistered from %s\n", integration.DisplayName())
 	return nil
+}
+
+// Codex config.toml handling
+
+const codexEnvPolicySection = `
+[shell_environment_policy]
+inherit = "all"
+`
+
+// getCodexConfigPath returns the path to Codex's config.toml
+func getCodexConfigPath() (string, error) {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(homeDir, ".codex", "config.toml"), nil
+}
+
+// codexNeedsEnvConfig checks if Codex config.toml needs shell_environment_policy
+func (r *Registrar) codexNeedsEnvConfig() (bool, error) {
+	configPath, err := getCodexConfigPath()
+	if err != nil {
+		return false, err
+	}
+
+	content, err := os.ReadFile(configPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return true, nil // Config doesn't exist, needs to be created
+		}
+		return false, err
+	}
+
+	// Check if shell_environment_policy is already configured
+	return !strings.Contains(string(content), "[shell_environment_policy]"), nil
+}
+
+// updateCodexEnvConfig adds shell_environment_policy to Codex config.toml
+func (r *Registrar) updateCodexEnvConfig() error {
+	configPath, err := getCodexConfigPath()
+	if err != nil {
+		return err
+	}
+
+	// Read existing content
+	existingContent, err := os.ReadFile(configPath)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+
+	// Backup if exists
+	if len(existingContent) > 0 {
+		backupPath, err := r.backup(configPath)
+		if err != nil {
+			return fmt.Errorf("failed to backup config.toml: %w", err)
+		}
+		fmt.Fprintf(r.Out, "  Backup of config.toml: %s\n", backupPath)
+	}
+
+	// Append the env policy section
+	newContent := string(existingContent) + codexEnvPolicySection
+
+	// Write updated config
+	if err := os.WriteFile(configPath, []byte(newContent), 0644); err != nil {
+		return err
+	}
+
+	fmt.Fprintf(r.Out, "  ✓ Updated %s with shell_environment_policy\n", configPath)
+	return nil
+}
+
+// handleCodexEnvConfig checks and handles Codex environment config with user consent
+func (r *Registrar) handleCodexEnvConfig() error {
+	needsConfig, err := r.codexNeedsEnvConfig()
+	if err != nil {
+		return err
+	}
+
+	if !needsConfig {
+		return nil // Already configured
+	}
+
+	// Warning was already shown in preview, just ask for confirmation
+	if !r.confirm("Update ~/.codex/config.toml to pass environment variables?") {
+		fmt.Fprintln(r.Out, "")
+		fmt.Fprintln(r.Out, "  ⚠️  Without this change, imggen won't work in Codex.")
+		fmt.Fprintln(r.Out, "  You can manually add the config later, or run:")
+		fmt.Fprintln(r.Out, "    imggen --api-key YOUR_KEY \"prompt\"")
+		fmt.Fprintln(r.Out, "")
+		return nil // Continue with registration, just warn
+	}
+
+	return r.updateCodexEnvConfig()
 }

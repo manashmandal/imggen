@@ -482,3 +482,27 @@ func TestNewRegistrar(t *testing.T) {
 		t.Error("NewRegistrar() Force should default to false")
 	}
 }
+
+func TestGetCodexConfigPath(t *testing.T) {
+	path, err := getCodexConfigPath()
+	if err != nil {
+		t.Errorf("getCodexConfigPath() error = %v", err)
+	}
+	if !strings.Contains(path, ".codex") {
+		t.Error("path should contain .codex directory")
+	}
+	if !strings.HasSuffix(path, "config.toml") {
+		t.Error("path should end with config.toml")
+	}
+}
+
+func TestRegistrar_codexNeedsEnvConfig(t *testing.T) {
+	r := &Registrar{}
+
+	// This test depends on actual config state
+	// Just verify it doesn't error
+	_, err := r.codexNeedsEnvConfig()
+	if err != nil {
+		t.Errorf("codexNeedsEnvConfig() error = %v", err)
+	}
+}
