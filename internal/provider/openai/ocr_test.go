@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 
 	"github.com/manash/imggen/internal/provider"
@@ -312,6 +313,388 @@ func TestProvider_SuggestSchema(t *testing.T) {
 
 	if result["type"] != "object" {
 		t.Errorf("Expected type = object, got %v", result["type"])
+	}
+}
+
+func TestProvider_OCR_WithURL(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := chatResponse{
+			Choices: []chatChoice{
+				{
+					Message: chatMessageOut{
+						Content: "Text from URL image",
+					},
+				},
+			},
+			Usage: &chatUsage{
+				PromptTokens:     100,
+				CompletionTokens: 50,
+			},
+		}
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	registry := models.DefaultRegistry()
+	prov, err := New(&provider.Config{
+		APIKey:  "test-key",
+		BaseURL: server.URL,
+	}, registry)
+	if err != nil {
+		t.Fatalf("Failed to create provider: %v", err)
+	}
+
+	req := models.NewOCRRequest()
+	req.ImageURL = "https://example.com/image.png"
+
+	resp, err := prov.OCR(context.Background(), req)
+	if err != nil {
+		t.Fatalf("OCR() error = %v", err)
+	}
+
+	if resp.Text != "Text from URL image" {
+		t.Errorf("OCR().Text = %q, want %q", resp.Text, "Text from URL image")
+	}
+}
+
+func TestProvider_OCR_WithCustomPrompt(t *testing.T) {
+	var receivedPrompt string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req chatRequest
+		json.NewDecoder(r.Body).Decode(&req)
+		if len(req.Messages) > 0 && len(req.Messages[0].Content) > 0 {
+			receivedPrompt = req.Messages[0].Content[0].Text
+		}
+
+		resp := chatResponse{
+			Choices: []chatChoice{{Message: chatMessageOut{Content: "result"}}},
+			Usage:   &chatUsage{PromptTokens: 10, CompletionTokens: 5},
+		}
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	registry := models.DefaultRegistry()
+	prov, err := New(&provider.Config{APIKey: "test-key", BaseURL: server.URL}, registry)
+	if err != nil {
+		t.Fatalf("Failed to create provider: %v", err)
+	}
+
+	req := models.NewOCRRequest()
+	req.ImageData = []byte{0x89, 0x50, 0x4E, 0x47}
+	req.Prompt = "Extract only the title"
+
+	_, err = prov.OCR(context.Background(), req)
+	if err != nil {
+		t.Fatalf("OCR() error = %v", err)
+	}
+
+	if receivedPrompt != "Extract only the title" {
+		t.Errorf("Expected custom prompt, got %q", receivedPrompt)
+	}
+}
+
+func TestProvider_OCR_NoChoices(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := chatResponse{
+			Choices: []chatChoice{},
+			Usage:   &chatUsage{PromptTokens: 10, CompletionTokens: 5},
+		}
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	registry := models.DefaultRegistry()
+	prov, err := New(&provider.Config{APIKey: "test-key", BaseURL: server.URL}, registry)
+	if err != nil {
+		t.Fatalf("Failed to create provider: %v", err)
+	}
+
+	req := models.NewOCRRequest()
+	req.ImageData = []byte{0x89, 0x50, 0x4E, 0x47}
+
+	_, err = prov.OCR(context.Background(), req)
+	if err == nil {
+		t.Error("OCR() should return error when no choices returned")
+	}
+}
+
+func TestProvider_OCR_HTTPError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(chatResponse{})
+	}))
+	defer server.Close()
+
+	registry := models.DefaultRegistry()
+	prov, err := New(&provider.Config{APIKey: "test-key", BaseURL: server.URL}, registry)
+	if err != nil {
+		t.Fatalf("Failed to create provider: %v", err)
+	}
+
+	req := models.NewOCRRequest()
+	req.ImageData = []byte{0x89, 0x50, 0x4E, 0x47}
+
+	_, err = prov.OCR(context.Background(), req)
+	if err == nil {
+		t.Error("OCR() should return error for HTTP 500")
+	}
+}
+
+func TestProvider_OCR_WithSchemaName(t *testing.T) {
+	var receivedSchemaName string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req chatRequest
+		json.NewDecoder(r.Body).Decode(&req)
+		if req.ResponseFormat != nil && req.ResponseFormat.JSONSchema != nil {
+			receivedSchemaName = req.ResponseFormat.JSONSchema.Name
+		}
+
+		resp := chatResponse{
+			Choices: []chatChoice{{Message: chatMessageOut{Content: `{"test": "value"}`}}},
+			Usage:   &chatUsage{PromptTokens: 10, CompletionTokens: 5},
+		}
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	registry := models.DefaultRegistry()
+	prov, err := New(&provider.Config{APIKey: "test-key", BaseURL: server.URL}, registry)
+	if err != nil {
+		t.Fatalf("Failed to create provider: %v", err)
+	}
+
+	req := models.NewOCRRequest()
+	req.ImageData = []byte{0x89, 0x50, 0x4E, 0x47}
+	req.Schema = json.RawMessage(`{"type": "object"}`)
+	req.SchemaName = "my_custom_schema"
+
+	_, err = prov.OCR(context.Background(), req)
+	if err != nil {
+		t.Fatalf("OCR() error = %v", err)
+	}
+
+	if receivedSchemaName != "my_custom_schema" {
+		t.Errorf("Expected schema name 'my_custom_schema', got %q", receivedSchemaName)
+	}
+}
+
+func TestProvider_SuggestSchema_WithMarkdownFences(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := chatResponse{
+			Choices: []chatChoice{
+				{
+					Message: chatMessageOut{
+						Content: "```json\n{\"type\": \"object\", \"properties\": {}}\n```",
+					},
+				},
+			},
+			Usage: &chatUsage{PromptTokens: 100, CompletionTokens: 50},
+		}
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	registry := models.DefaultRegistry()
+	prov, err := New(&provider.Config{APIKey: "test-key", BaseURL: server.URL}, registry)
+	if err != nil {
+		t.Fatalf("Failed to create provider: %v", err)
+	}
+
+	req := models.NewOCRRequest()
+	req.ImageData = []byte{0x89, 0x50, 0x4E, 0x47}
+
+	schema, err := prov.SuggestSchema(context.Background(), req)
+	if err != nil {
+		t.Fatalf("SuggestSchema() error = %v", err)
+	}
+
+	var result map[string]interface{}
+	if err := json.Unmarshal(schema, &result); err != nil {
+		t.Fatalf("Failed to unmarshal schema: %v", err)
+	}
+
+	if result["type"] != "object" {
+		t.Errorf("Expected type = object, got %v", result["type"])
+	}
+}
+
+func TestProvider_SuggestSchema_InvalidJSON(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := chatResponse{
+			Choices: []chatChoice{
+				{
+					Message: chatMessageOut{
+						Content: "This is not valid JSON",
+					},
+				},
+			},
+			Usage: &chatUsage{PromptTokens: 100, CompletionTokens: 50},
+		}
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	registry := models.DefaultRegistry()
+	prov, err := New(&provider.Config{APIKey: "test-key", BaseURL: server.URL}, registry)
+	if err != nil {
+		t.Fatalf("Failed to create provider: %v", err)
+	}
+
+	req := models.NewOCRRequest()
+	req.ImageData = []byte{0x89, 0x50, 0x4E, 0x47}
+
+	_, err = prov.SuggestSchema(context.Background(), req)
+	if err == nil {
+		t.Error("SuggestSchema() should return error for invalid JSON")
+	}
+}
+
+func TestProvider_SuggestSchema_APIError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := chatResponse{
+			Error: &apiError{Message: "Rate limit exceeded"},
+		}
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	registry := models.DefaultRegistry()
+	prov, err := New(&provider.Config{APIKey: "test-key", BaseURL: server.URL}, registry)
+	if err != nil {
+		t.Fatalf("Failed to create provider: %v", err)
+	}
+
+	req := models.NewOCRRequest()
+	req.ImageData = []byte{0x89, 0x50, 0x4E, 0x47}
+
+	_, err = prov.SuggestSchema(context.Background(), req)
+	if err == nil {
+		t.Error("SuggestSchema() should return error for API error")
+	}
+}
+
+func TestProvider_SuggestSchema_NoChoices(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := chatResponse{
+			Choices: []chatChoice{},
+			Usage:   &chatUsage{PromptTokens: 100, CompletionTokens: 50},
+		}
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	registry := models.DefaultRegistry()
+	prov, err := New(&provider.Config{APIKey: "test-key", BaseURL: server.URL}, registry)
+	if err != nil {
+		t.Fatalf("Failed to create provider: %v", err)
+	}
+
+	req := models.NewOCRRequest()
+	req.ImageData = []byte{0x89, 0x50, 0x4E, 0x47}
+
+	_, err = prov.SuggestSchema(context.Background(), req)
+	if err == nil {
+		t.Error("SuggestSchema() should return error when no choices returned")
+	}
+}
+
+func TestProvider_OCR_Verbose(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := chatResponse{
+			Choices: []chatChoice{{Message: chatMessageOut{Content: "test"}}},
+			Usage:   &chatUsage{PromptTokens: 10, CompletionTokens: 5},
+		}
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	registry := models.DefaultRegistry()
+	prov, err := New(&provider.Config{
+		APIKey:  "test-key",
+		BaseURL: server.URL,
+		Verbose: true,
+	}, registry)
+	if err != nil {
+		t.Fatalf("Failed to create provider: %v", err)
+	}
+
+	req := models.NewOCRRequest()
+	req.ImageData = []byte{0x89, 0x50, 0x4E, 0x47}
+	req.Schema = json.RawMessage(`{"type": "object"}`)
+
+	_, err = prov.OCR(context.Background(), req)
+	if err != nil {
+		t.Fatalf("OCR() error = %v", err)
+	}
+}
+
+func TestProvider_OCR_WithFilePath(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := chatResponse{
+			Choices: []chatChoice{{Message: chatMessageOut{Content: "Text from file"}}},
+			Usage:   &chatUsage{PromptTokens: 100, CompletionTokens: 50},
+		}
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	// Create a temp file with PNG magic bytes
+	tmpFile, err := os.CreateTemp("", "test-image-*.png")
+	if err != nil {
+		t.Fatalf("Failed to create temp file: %v", err)
+	}
+	defer os.Remove(tmpFile.Name())
+	tmpFile.Write([]byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A})
+	tmpFile.Close()
+
+	registry := models.DefaultRegistry()
+	prov, err := New(&provider.Config{APIKey: "test-key", BaseURL: server.URL}, registry)
+	if err != nil {
+		t.Fatalf("Failed to create provider: %v", err)
+	}
+
+	req := models.NewOCRRequest()
+	req.ImagePath = tmpFile.Name()
+
+	resp, err := prov.OCR(context.Background(), req)
+	if err != nil {
+		t.Fatalf("OCR() error = %v", err)
+	}
+
+	if resp.Text != "Text from file" {
+		t.Errorf("OCR().Text = %q, want %q", resp.Text, "Text from file")
+	}
+}
+
+func TestProvider_OCR_FileNotFound(t *testing.T) {
+	registry := models.DefaultRegistry()
+	prov, err := New(&provider.Config{APIKey: "test-key"}, registry)
+	if err != nil {
+		t.Fatalf("Failed to create provider: %v", err)
+	}
+
+	req := models.NewOCRRequest()
+	req.ImagePath = "/nonexistent/path/to/image.png"
+
+	_, err = prov.OCR(context.Background(), req)
+	if err == nil {
+		t.Error("OCR() should return error for nonexistent file")
+	}
+}
+
+func TestProvider_SuggestSchema_ValidationError(t *testing.T) {
+	registry := models.DefaultRegistry()
+	prov, err := New(&provider.Config{APIKey: "test-key"}, registry)
+	if err != nil {
+		t.Fatalf("Failed to create provider: %v", err)
+	}
+
+	req := &models.OCRRequest{} // Empty request
+
+	_, err = prov.SuggestSchema(context.Background(), req)
+	if err == nil {
+		t.Error("SuggestSchema() should return error for empty request")
 	}
 }
 
