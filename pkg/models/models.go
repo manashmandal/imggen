@@ -181,12 +181,14 @@ func (c *ModelCapabilities) ApplyDefaults(req *Request) {
 }
 
 type ModelRegistry struct {
-	models map[string]*ModelCapabilities
+	models    map[string]*ModelCapabilities
+	ocrModels map[string]*OCRModelCapabilities
 }
 
 func NewModelRegistry() *ModelRegistry {
 	return &ModelRegistry{
-		models: make(map[string]*ModelCapabilities),
+		models:    make(map[string]*ModelCapabilities),
+		ocrModels: make(map[string]*OCRModelCapabilities),
 	}
 }
 
@@ -282,6 +284,31 @@ func DefaultRegistry() *ModelRegistry {
 		DefaultQuality:       "",
 		SupportsStyle:        false,
 		SupportsTransparency: false,
+	})
+
+	// OCR models (GPT-5 series with vision capabilities)
+	r.RegisterOCR(&OCRModelCapabilities{
+		Name:             "gpt-5.2",
+		Provider:         ProviderOpenAI,
+		MaxImageSize:     20 * 1024 * 1024, // 20MB
+		SupportsSchema:   true,
+		DefaultMaxTokens: 16384,
+	})
+
+	r.RegisterOCR(&OCRModelCapabilities{
+		Name:             "gpt-5-mini",
+		Provider:         ProviderOpenAI,
+		MaxImageSize:     20 * 1024 * 1024, // 20MB
+		SupportsSchema:   true,
+		DefaultMaxTokens: 16384,
+	})
+
+	r.RegisterOCR(&OCRModelCapabilities{
+		Name:             "gpt-5-nano",
+		Provider:         ProviderOpenAI,
+		MaxImageSize:     20 * 1024 * 1024, // 20MB
+		SupportsSchema:   true,
+		DefaultMaxTokens: 16384,
 	})
 
 	return r

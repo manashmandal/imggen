@@ -1,14 +1,14 @@
 ---
 name: imggen
-description: Use this skill when users want to generate images using OpenAI's image generation API (DALL-E or gpt-image-1). Invoke when users request AI-generated images, artwork, logos, illustrations, or visual content from text prompts.
-version: 1.0.0
+description: Use this skill when users want to generate images using OpenAI's image generation API (DALL-E or gpt-image-1), or extract text from images using OCR. Invoke when users request AI-generated images, artwork, logos, illustrations, visual content from text prompts, or need to extract text/data from images.
+version: 1.1.0
 allowed-tools: Bash(imggen:*), Read, Write
 model: inherit
 ---
 
-# imggen - OpenAI Image Generation CLI
+# imggen - OpenAI Image Generation and OCR CLI
 
-Generate images from text prompts using OpenAI's image generation API.
+Generate images from text prompts and extract text from images using OpenAI's APIs.
 
 ## Overview
 
@@ -264,3 +264,119 @@ Costs per image (USD):
 | 256x256 | $0.016 |
 | 512x512 | $0.018 |
 | 1024x1024 | $0.020 |
+
+## OCR (Optical Character Recognition)
+
+Extract text from images using OpenAI's vision API with optional structured output support.
+
+### OCR Usage
+
+```bash
+imggen ocr <image-path> [flags]
+```
+
+### OCR Flags
+
+| Flag | Short | Default | Description |
+|------|-------|---------|-------------|
+| `--model` | `-m` | `gpt-5-mini` | Model: gpt-5.2, gpt-5-mini, gpt-5-nano |
+| `--schema` | `-s` | | JSON schema file for structured output |
+| `--schema-name` | | `extracted_data` | Name for the JSON schema |
+| `--suggest-schema` | | `false` | Suggest a JSON schema based on image content |
+| `--prompt` | `-p` | auto | Custom extraction prompt |
+| `--output` | `-o` | stdout | Output file |
+| `--url` | | | Image URL instead of file path |
+| `--api-key` | | `$OPENAI_API_KEY` | Override API key |
+| `--verbose` | `-v` | `false` | Log HTTP requests and responses |
+
+### OCR Models
+
+| Model | Cost (Input) | Cost (Output) | Best For |
+|-------|-------------|---------------|----------|
+| gpt-5-nano | $0.05/1M tokens | $0.40/1M tokens | Ultra budget, simple text |
+| gpt-5-mini | $0.25/1M tokens | $2.00/1M tokens | Cost-effective, most OCR tasks |
+| gpt-5.2 | $1.75/1M tokens | $14.00/1M tokens | Complex documents, highest accuracy |
+
+### OCR Examples
+
+#### Basic text extraction
+```bash
+imggen ocr document.png
+```
+
+#### Extract from URL
+```bash
+imggen ocr --url https://example.com/image.png
+```
+
+#### Save output to file
+```bash
+imggen ocr receipt.jpg -o extracted.txt
+```
+
+#### Structured output with JSON schema
+```bash
+# Create a schema file (invoice_schema.json):
+# {
+#   "type": "object",
+#   "properties": {
+#     "vendor": {"type": "string"},
+#     "date": {"type": "string"},
+#     "total": {"type": "number"},
+#     "items": {
+#       "type": "array",
+#       "items": {
+#         "type": "object",
+#         "properties": {
+#           "name": {"type": "string"},
+#           "price": {"type": "number"}
+#         },
+#         "required": ["name", "price"],
+#         "additionalProperties": false
+#       }
+#     }
+#   },
+#   "required": ["vendor", "date", "total"],
+#   "additionalProperties": false
+# }
+
+imggen ocr receipt.jpg --schema invoice_schema.json -o invoice.json
+```
+
+#### Auto-suggest a JSON schema
+```bash
+# Analyze image and suggest appropriate schema
+imggen ocr document.png --suggest-schema
+
+# Save suggested schema to file
+imggen ocr document.png --suggest-schema -o suggested_schema.json
+```
+
+#### Use higher accuracy model
+```bash
+imggen ocr complex-document.pdf -m gpt-4o
+```
+
+#### Custom extraction prompt
+```bash
+imggen ocr business-card.jpg -p "Extract the name, title, email, and phone number"
+```
+
+### OCR Structured Output
+
+When using the `--schema` flag, the output will be structured JSON matching your schema. This is useful for:
+- Extracting data from receipts, invoices, forms
+- Parsing business cards, ID documents
+- Converting tables and structured content to JSON
+- Data entry automation
+
+The schema must follow JSON Schema draft-07 format with `additionalProperties: false` for strict validation.
+
+### OCR Tips
+
+1. **Use gpt-5-nano** for simple text extraction (plain documents, basic receipts)
+2. **Use gpt-5-mini** (default) for most OCR tasks (receipts, business cards, forms)
+3. **Use gpt-5.2** for complex documents (dense tables, handwriting, multi-language)
+4. **Suggest schema first** if unsure about document structure
+5. **Custom prompts** help when you need specific fields or formatting
+6. **Supported formats**: PNG, JPEG, GIF, WEBP, PDF (first page)

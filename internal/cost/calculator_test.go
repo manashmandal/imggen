@@ -312,3 +312,114 @@ func floatEquals(a, b float64) bool {
 	const epsilon = 0.0001
 	return (a-b) < epsilon && (b-a) < epsilon
 }
+
+func TestCalculator_CalculateOCR(t *testing.T) {
+	calc := NewCalculator()
+
+	tests := []struct {
+		name         string
+		model        string
+		inputTokens  int
+		outputTokens int
+		wantMin      float64
+		wantMax      float64
+	}{
+		{
+			name:         "gpt-5.2 small request",
+			model:        "gpt-5.2",
+			inputTokens:  1000,
+			outputTokens: 500,
+			wantMin:      0.001,
+			wantMax:      0.02,
+		},
+		{
+			name:         "gpt-5-mini small request",
+			model:        "gpt-5-mini",
+			inputTokens:  1000,
+			outputTokens: 500,
+			wantMin:      0.0001,
+			wantMax:      0.01,
+		},
+		{
+			name:         "gpt-5-nano small request",
+			model:        "gpt-5-nano",
+			inputTokens:  1000,
+			outputTokens: 500,
+			wantMin:      0.00001,
+			wantMax:      0.001,
+		},
+		{
+			name:         "gpt-5.2 large request",
+			model:        "gpt-5.2",
+			inputTokens:  100000,
+			outputTokens: 10000,
+			wantMin:      0.1,
+			wantMax:      0.5,
+		},
+		{
+			name:         "gpt-5-mini large request",
+			model:        "gpt-5-mini",
+			inputTokens:  100000,
+			outputTokens: 10000,
+			wantMin:      0.01,
+			wantMax:      0.1,
+		},
+		{
+			name:         "unknown model uses mini pricing",
+			model:        "unknown-model",
+			inputTokens:  1000,
+			outputTokens: 500,
+			wantMin:      0.0001,
+			wantMax:      0.01,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := calc.CalculateOCR(tt.model, tt.inputTokens, tt.outputTokens)
+
+			if result == nil {
+				t.Fatal("CalculateOCR returned nil")
+			}
+
+			if result.Total < tt.wantMin || result.Total > tt.wantMax {
+				t.Errorf("CalculateOCR().Total = %v, want between %v and %v", result.Total, tt.wantMin, tt.wantMax)
+			}
+
+			if result.Currency != CurrencyUSD {
+				t.Errorf("CalculateOCR().Currency = %v, want %v", result.Currency, CurrencyUSD)
+			}
+		})
+	}
+}
+
+func TestCalculator_CalculateOCR_ExactPricing(t *testing.T) {
+	calc := NewCalculator()
+
+	// Test exact pricing calculation for gpt-5.2
+	// gpt-5.2: $1.75 per 1M input, $14.00 per 1M output
+	result := calc.CalculateOCR("gpt-5.2", 1_000_000, 1_000_000)
+	expectedCost := 1.75 + 14.00
+
+	if !floatEquals(result.Total, expectedCost) {
+		t.Errorf("CalculateOCR('gpt-5.2', 1M, 1M).Total = %v, want %v", result.Total, expectedCost)
+	}
+
+	// Test exact pricing calculation for gpt-5-mini
+	// gpt-5-mini: $0.25 per 1M input, $2.00 per 1M output
+	result = calc.CalculateOCR("gpt-5-mini", 1_000_000, 1_000_000)
+	expectedCost = 0.25 + 2.00
+
+	if !floatEquals(result.Total, expectedCost) {
+		t.Errorf("CalculateOCR('gpt-5-mini', 1M, 1M).Total = %v, want %v", result.Total, expectedCost)
+	}
+
+	// Test exact pricing calculation for gpt-5-nano
+	// gpt-5-nano: $0.05 per 1M input, $0.40 per 1M output
+	result = calc.CalculateOCR("gpt-5-nano", 1_000_000, 1_000_000)
+	expectedCost = 0.05 + 0.40
+
+	if !floatEquals(result.Total, expectedCost) {
+		t.Errorf("CalculateOCR('gpt-5-nano', 1M, 1M).Total = %v, want %v", result.Total, expectedCost)
+	}
+}

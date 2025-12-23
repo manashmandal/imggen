@@ -62,3 +62,35 @@ func (c *Calculator) calculateStability(model, size, quality string) float64 {
 	// TODO: Add Stability AI pricing when integrated
 	return 0
 }
+
+// CalculateOCR calculates the cost for OCR operations based on token usage
+// Pricing is per 1M tokens for GPT-5 series models
+func (c *Calculator) CalculateOCR(model string, inputTokens, outputTokens int) *models.CostInfo {
+	var inputCostPer1M, outputCostPer1M float64
+
+	switch model {
+	case "gpt-5.2":
+		inputCostPer1M = 1.75   // $1.75 per 1M input tokens
+		outputCostPer1M = 14.00 // $14.00 per 1M output tokens
+	case "gpt-5-mini":
+		inputCostPer1M = 0.25 // $0.25 per 1M input tokens
+		outputCostPer1M = 2.00 // $2.00 per 1M output tokens
+	case "gpt-5-nano":
+		inputCostPer1M = 0.05 // $0.05 per 1M input tokens
+		outputCostPer1M = 0.40 // $0.40 per 1M output tokens
+	default:
+		// Default to gpt-5-mini pricing
+		inputCostPer1M = 0.25
+		outputCostPer1M = 2.00
+	}
+
+	inputCost := (float64(inputTokens) / 1_000_000) * inputCostPer1M
+	outputCost := (float64(outputTokens) / 1_000_000) * outputCostPer1M
+	total := inputCost + outputCost
+
+	return &models.CostInfo{
+		PerImage: total, // For OCR, we use PerImage as per-request
+		Total:    total,
+		Currency: CurrencyUSD,
+	}
+}
