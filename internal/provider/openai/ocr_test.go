@@ -90,7 +90,7 @@ func TestProvider_OCR_Success(t *testing.T) {
 			ID:      "chatcmpl-123",
 			Object:  "chat.completion",
 			Created: 1234567890,
-			Model:   "gpt-4o-mini",
+			Model:   "gpt-5-mini",
 			Choices: []chatChoice{
 				{
 					Index: 0,

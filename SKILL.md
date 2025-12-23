@@ -354,7 +354,7 @@ imggen ocr document.png --suggest-schema -o suggested_schema.json
 
 #### Use higher accuracy model
 ```bash
-imggen ocr complex-document.pdf -m gpt-4o
+imggen ocr complex-document.pdf -m gpt-5.2
 ```
 
 #### Custom extraction prompt
