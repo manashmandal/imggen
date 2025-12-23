@@ -2,7 +2,9 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -58,6 +60,16 @@ var (
 	flagBatchParallel    int
 	flagBatchStopOnError bool
 	flagBatchDelay       int
+)
+
+var (
+	flagOCRModel         string
+	flagOCRSchema        string
+	flagOCRSchemaName    string
+	flagOCRSuggestSchema bool
+	flagOCRPrompt        string
+	flagOCROutput        string
+	flagOCRURL           string
 )
 
 type App struct {
@@ -152,6 +164,7 @@ Examples:
 	cmd.AddCommand(newBatchCmd(app))
 	cmd.AddCommand(newRegisterCmd(app))
 	cmd.AddCommand(newKeysCmd(app))
+	cmd.AddCommand(newOCRCmd(app))
 
 	return cmd
 }
@@ -1081,6 +1094,189 @@ func runListBackups(app *App, integration string) error {
 func runRollback(app *App, backupPath string) error {
 	registrar := register.NewRegistrar(app.Out, app.Err, os.Stdin)
 	return registrar.Rollback(backupPath)
+}
+
+// OCR command
+
+func newOCRCmd(app *App) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "ocr <image-path>",
+		Short: "Extract text from images using OCR",
+		Long: `Extract text from images using OpenAI's vision API.
+
+Supports structured output with JSON schemas. If no schema is provided,
+you can use --suggest-schema to have the AI suggest an appropriate schema.
+
+Input:
+  Provide an image file path as argument, or use --url for remote images.
+
+Output:
+  By default, outputs plain text. Use --schema for structured JSON output.
+
+Examples:
+  imggen ocr image.png                              # Extract text from image
+  imggen ocr --url https://example.com/image.png    # Extract from URL
+  imggen ocr image.png --schema schema.json         # Structured output
+  imggen ocr image.png --suggest-schema             # Suggest a JSON schema
+  imggen ocr image.png -o output.txt                # Save to file
+  imggen ocr receipt.jpg --schema invoice.json -o data.json`,
+		Args: func(cmd *cobra.Command, args []string) error {
+			if flagOCRURL != "" {
+				return nil
+			}
+			return cobra.ExactArgs(1)(cmd, args)
+		},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runOCR(cmd, args, app)
+		},
+	}
+
+	cmd.Flags().StringVarP(&flagOCRModel, "model", "m", "gpt-5-mini", "model to use (gpt-5.2, gpt-5-mini, gpt-5-nano)")
+	cmd.Flags().StringVarP(&flagOCRSchema, "schema", "s", "", "JSON schema file for structured output")
+	cmd.Flags().StringVar(&flagOCRSchemaName, "schema-name", "", "name for the JSON schema (default: extracted_data)")
+	cmd.Flags().BoolVar(&flagOCRSuggestSchema, "suggest-schema", false, "suggest a JSON schema based on image content")
+	cmd.Flags().StringVarP(&flagOCRPrompt, "prompt", "p", "", "custom extraction prompt")
+	cmd.Flags().StringVarP(&flagOCROutput, "output", "o", "", "output file (default: stdout)")
+	cmd.Flags().StringVar(&flagOCRURL, "url", "", "image URL instead of file path")
+	cmd.Flags().StringVar(&flagAPIKey, "api-key", "", "API key (defaults to OPENAI_API_KEY)")
+	cmd.Flags().BoolVarP(&flagVerbose, "verbose", "v", false, "log HTTP requests and responses")
+
+	return cmd
+}
+
+func runOCR(_ *cobra.Command, args []string, app *App) error {
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
+
+	apiKey, _, err := keys.GetAPIKey(flagAPIKey, "openai", "OPENAI_API_KEY")
+	if err != nil {
+		return err
+	}
+
+	providerCfg := &provider.Config{APIKey: apiKey, Verbose: flagVerbose}
+	prov, err := app.NewProvider(providerCfg, app.Registry)
+	if err != nil {
+		return fmt.Errorf("failed to create provider: %w", err)
+	}
+
+	ocrProv, ok := prov.(interface {
+		OCR(ctx context.Context, req *models.OCRRequest) (*models.OCRResponse, error)
+		SuggestSchema(ctx context.Context, req *models.OCRRequest) (json.RawMessage, error)
+	})
+	if !ok {
+		return fmt.Errorf("provider does not support OCR")
+	}
+
+	req := models.NewOCRRequest()
+	req.Model = flagOCRModel
+	req.Prompt = flagOCRPrompt
+
+	if flagOCRURL != "" {
+		req.ImageURL = flagOCRURL
+	} else if len(args) > 0 {
+		req.ImagePath = args[0]
+		if _, err := os.Stat(req.ImagePath); os.IsNotExist(err) {
+			return fmt.Errorf("image file not found: %s", req.ImagePath)
+		}
+	}
+
+	// Load schema if provided
+	if flagOCRSchema != "" {
+		schemaData, err := os.ReadFile(flagOCRSchema)
+		if err != nil {
+			return fmt.Errorf("failed to read schema file: %w", err)
+		}
+		req.Schema = schemaData
+		req.SchemaName = flagOCRSchemaName
+	}
+
+	// Suggest schema mode
+	if flagOCRSuggestSchema {
+		fmt.Fprintln(app.Out, "Analyzing image to suggest JSON schema...")
+		schema, err := ocrProv.SuggestSchema(ctx, req)
+		if err != nil {
+			return fmt.Errorf("failed to suggest schema: %w", err)
+		}
+
+		// Pretty print the schema
+		var prettySchema bytes.Buffer
+		if err := json.Indent(&prettySchema, schema, "", "  "); err != nil {
+			fmt.Fprintln(app.Out, string(schema))
+		} else {
+			fmt.Fprintln(app.Out, prettySchema.String())
+		}
+
+		// Save to file if output specified
+		if flagOCROutput != "" {
+			if err := os.WriteFile(flagOCROutput, prettySchema.Bytes(), 0644); err != nil {
+				return fmt.Errorf("failed to write schema file: %w", err)
+			}
+			fmt.Fprintf(app.Out, "\nSchema saved to: %s\n", flagOCROutput)
+		}
+
+		return nil
+	}
+
+	// Regular OCR extraction
+	source := req.ImagePath
+	if source == "" {
+		source = req.ImageURL
+	}
+	fmt.Fprintf(app.Out, "Extracting text from %s using %s...\n", source, req.Model)
+
+	resp, err := ocrProv.OCR(ctx, req)
+	if err != nil {
+		return fmt.Errorf("OCR failed: %w", err)
+	}
+
+	var output string
+	if len(resp.Structured) > 0 {
+		var prettyJSON bytes.Buffer
+		if err := json.Indent(&prettyJSON, resp.Structured, "", "  "); err != nil {
+			output = string(resp.Structured)
+		} else {
+			output = prettyJSON.String()
+		}
+	} else {
+		output = resp.Text
+	}
+
+	// Write output
+	if flagOCROutput != "" {
+		if err := os.WriteFile(flagOCROutput, []byte(output), 0644); err != nil {
+			return fmt.Errorf("failed to write output file: %w", err)
+		}
+		fmt.Fprintf(app.Out, "Output saved to: %s\n", flagOCROutput)
+	} else {
+		fmt.Fprintln(app.Out, "")
+		fmt.Fprintln(app.Out, output)
+	}
+
+	// Show cost info
+	if resp.Cost != nil {
+		fmt.Fprintf(app.Out, "\nCost: $%.6f (input: %d tokens, output: %d tokens)\n",
+			resp.Cost.Total, resp.InputTokens, resp.OutputTokens)
+
+		// Log cost to database
+		store, err := session.NewStore()
+		if err == nil {
+			defer store.Close()
+			costEntry := &session.CostEntry{
+				IterationID: "",
+				SessionID:   "",
+				Provider:    "openai",
+				Model:       req.Model,
+				Cost:        resp.Cost.Total,
+				ImageCount:  1,
+				Timestamp:   time.Now(),
+			}
+			if logErr := store.LogCost(ctx, costEntry); logErr != nil {
+				fmt.Fprintf(app.Err, "Warning: failed to log cost: %v\n", logErr)
+			}
+		}
+	}
+
+	return nil
 }
 
 // Keys command
