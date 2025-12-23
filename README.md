@@ -4,7 +4,7 @@
 
 <h1 align="center">imggen</h1>
 
-<p align="center">CLI tool for generating images using AI image generation APIs.</p>
+<p align="center">CLI tool for generating images and extracting text (OCR) using AI APIs.</p>
 
 > **Note:** Currently only OpenAI is supported. Other providers (Stability AI, etc.) are work in progress.
 
@@ -137,6 +137,83 @@ output/001-a-sunset-over-mountains.png
 output/002-a-cat-playing-piano.png
 output/003-abstract-geometric-art.png
 ```
+
+## OCR (Optical Character Recognition)
+
+Extract text from images using OpenAI's vision API with optional structured output:
+
+```bash
+# Basic text extraction
+imggen ocr document.png
+
+# Extract from URL
+imggen ocr --url https://example.com/image.png
+
+# Save output to file
+imggen ocr receipt.jpg -o extracted.txt
+
+# Use higher accuracy model
+imggen ocr complex-document.png -m gpt-5.2
+
+# Custom extraction prompt
+imggen ocr business-card.jpg -p "Extract the name, title, email, and phone number"
+```
+
+### Structured Output
+
+Extract data into structured JSON using a schema:
+
+```bash
+# Create a schema file (invoice_schema.json):
+# {
+#   "type": "object",
+#   "properties": {
+#     "vendor": {"type": "string"},
+#     "total": {"type": "number"},
+#     "items": {
+#       "type": "array",
+#       "items": {"type": "object", "properties": {"name": {"type": "string"}, "price": {"type": "number"}}}
+#     }
+#   },
+#   "required": ["vendor", "total"],
+#   "additionalProperties": false
+# }
+
+imggen ocr receipt.jpg --schema invoice_schema.json -o invoice.json
+```
+
+### Auto-Suggest Schema
+
+Let the AI analyze the image and suggest an appropriate schema:
+
+```bash
+# Analyze image and suggest schema
+imggen ocr document.png --suggest-schema
+
+# Save suggested schema to file
+imggen ocr document.png --suggest-schema -o suggested_schema.json
+```
+
+### OCR Models
+
+| Model | Cost (Input) | Cost (Output) | Best For |
+|-------|-------------|---------------|----------|
+| gpt-5-nano | $0.05/1M tokens | $0.40/1M tokens | Simple text, budget |
+| gpt-5-mini | $0.25/1M tokens | $2.00/1M tokens | Most OCR tasks (default) |
+| gpt-5.2 | $1.75/1M tokens | $14.00/1M tokens | Complex documents |
+
+### OCR Flags
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--model` | `-m` | Model (gpt-5.2, gpt-5-mini, gpt-5-nano) | gpt-5-mini |
+| `--schema` | `-s` | JSON schema file for structured output | |
+| `--schema-name` | | Name for the JSON schema | extracted_data |
+| `--suggest-schema` | | Suggest a JSON schema based on image | false |
+| `--prompt` | `-p` | Custom extraction prompt | auto |
+| `--output` | `-o` | Output file | stdout |
+| `--url` | | Image URL instead of file path | |
+| `--verbose` | `-v` | Log HTTP requests and responses | false |
 
 ## Flags
 
