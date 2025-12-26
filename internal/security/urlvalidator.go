@@ -8,37 +8,23 @@ import (
 )
 
 var (
-	// allowedHosts contains trusted hosts for image downloads
 	allowedHosts = []string{
 		"oaidalleapiprodscus.blob.core.windows.net",
 		"dalleprodsec.blob.core.windows.net",
 	}
 
-	// ErrPrivateIP is returned when URL resolves to a private IP
-	ErrPrivateIP = fmt.Errorf("URL resolves to private IP address")
-
-	// ErrUntrustedHost is returned when URL host is not in allowlist
+	ErrPrivateIP     = fmt.Errorf("URL resolves to private IP address")
 	ErrUntrustedHost = fmt.Errorf("URL host is not trusted")
-
-	// ErrInvalidScheme is returned for non-HTTPS URLs
 	ErrInvalidScheme = fmt.Errorf("only HTTPS URLs are allowed")
 
-	// skipValidation is used for testing purposes only
 	skipValidation = false
 )
 
-// SetSkipValidation enables/disables URL validation (for testing only)
 func SetSkipValidation(skip bool) {
 	skipValidation = skip
 }
 
-// ValidateImageURL validates that a URL is safe to fetch
-// It checks for:
-// - HTTPS scheme only
-// - Host is in allowlist (if strict mode)
-// - Does not resolve to private IP ranges
 func ValidateImageURL(rawURL string, strictMode bool) error {
-	// Skip validation in test mode
 	if skipValidation {
 		return nil
 	}
@@ -48,26 +34,17 @@ func ValidateImageURL(rawURL string, strictMode bool) error {
 		return fmt.Errorf("invalid URL: %w", err)
 	}
 
-	// Only allow HTTPS
 	if parsed.Scheme != "https" {
 		return ErrInvalidScheme
 	}
 
 	host := parsed.Hostname()
 
-	// In strict mode, only allow known OpenAI blob storage hosts
-	if strictMode {
-		if !isAllowedHost(host) {
-			return ErrUntrustedHost
-		}
+	if strictMode && !isAllowedHost(host) {
+		return ErrUntrustedHost
 	}
 
-	// Check if host resolves to private IP
-	if err := validateHostIP(host); err != nil {
-		return err
-	}
-
-	return nil
+	return validateHostIP(host)
 }
 
 func isAllowedHost(host string) bool {
@@ -81,7 +58,6 @@ func isAllowedHost(host string) bool {
 }
 
 func validateHostIP(host string) error {
-	// Try to parse as IP first
 	if ip := net.ParseIP(host); ip != nil {
 		if isPrivateIP(ip) {
 			return ErrPrivateIP
@@ -89,10 +65,8 @@ func validateHostIP(host string) error {
 		return nil
 	}
 
-	// Resolve hostname
 	ips, err := net.LookupIP(host)
 	if err != nil {
-		// Allow if we can't resolve - let the HTTP client handle it
 		return nil
 	}
 
@@ -106,58 +80,28 @@ func validateHostIP(host string) error {
 }
 
 func isPrivateIP(ip net.IP) bool {
-	// Check for loopback (127.0.0.0/8, ::1)
-	if ip.IsLoopback() {
+	if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
+		ip.IsPrivate() || ip.IsUnspecified() {
 		return true
 	}
 
-	// Check for link-local (169.254.0.0/16, fe80::/10)
-	if ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
-		return true
-	}
-
-	// Check for private ranges
-	if ip.IsPrivate() {
-		return true
-	}
-
-	// Check for unspecified (0.0.0.0, ::)
-	if ip.IsUnspecified() {
-		return true
-	}
-
-	// Additional checks for IPv4 special ranges
 	if ip4 := ip.To4(); ip4 != nil {
-		// 0.0.0.0/8 - Current network
-		if ip4[0] == 0 {
+		switch {
+		case ip4[0] == 0: // 0.0.0.0/8
 			return true
-		}
-		// 100.64.0.0/10 - Carrier-grade NAT
-		if ip4[0] == 100 && ip4[1] >= 64 && ip4[1] <= 127 {
+		case ip4[0] == 100 && ip4[1] >= 64 && ip4[1] <= 127: // 100.64.0.0/10 (CGNAT)
 			return true
-		}
-		// 192.0.0.0/24 - IETF Protocol Assignments
-		if ip4[0] == 192 && ip4[1] == 0 && ip4[2] == 0 {
+		case ip4[0] == 192 && ip4[1] == 0 && ip4[2] == 0: // 192.0.0.0/24
 			return true
-		}
-		// 192.0.2.0/24 - TEST-NET-1
-		if ip4[0] == 192 && ip4[1] == 0 && ip4[2] == 2 {
+		case ip4[0] == 192 && ip4[1] == 0 && ip4[2] == 2: // 192.0.2.0/24 (TEST-NET-1)
 			return true
-		}
-		// 198.51.100.0/24 - TEST-NET-2
-		if ip4[0] == 198 && ip4[1] == 51 && ip4[2] == 100 {
+		case ip4[0] == 198 && ip4[1] == 51 && ip4[2] == 100: // 198.51.100.0/24 (TEST-NET-2)
 			return true
-		}
-		// 203.0.113.0/24 - TEST-NET-3
-		if ip4[0] == 203 && ip4[1] == 0 && ip4[2] == 113 {
+		case ip4[0] == 203 && ip4[1] == 0 && ip4[2] == 113: // 203.0.113.0/24 (TEST-NET-3)
 			return true
-		}
-		// 224.0.0.0/4 - Multicast
-		if ip4[0] >= 224 && ip4[0] <= 239 {
+		case ip4[0] >= 224 && ip4[0] <= 239: // 224.0.0.0/4 (Multicast)
 			return true
-		}
-		// 240.0.0.0/4 - Reserved
-		if ip4[0] >= 240 {
+		case ip4[0] >= 240: // 240.0.0.0/4 (Reserved)
 			return true
 		}
 	}

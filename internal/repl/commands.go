@@ -302,7 +302,6 @@ func (c *SaveCommand) Execute(_ context.Context, r *REPL, args []string) error {
 	var destPath string
 	if len(args) > 0 {
 		destPath = args[0]
-		// Validate path to prevent path traversal attacks
 		if err := security.ValidateSavePath(destPath); err != nil {
 			return fmt.Errorf("invalid save path: %w", err)
 		}

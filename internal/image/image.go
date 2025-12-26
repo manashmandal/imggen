@@ -67,8 +67,6 @@ func (s *Saver) SaveAll(ctx context.Context, resp *models.Response, basePath str
 }
 
 func (s *Saver) downloadFromURL(ctx context.Context, url string) ([]byte, error) {
-	// Validate URL to prevent SSRF attacks
-	// Use non-strict mode as OpenAI may use different CDN domains
 	if err := security.ValidateImageURL(url, false); err != nil {
 		return nil, fmt.Errorf("URL validation failed: %w", err)
 	}

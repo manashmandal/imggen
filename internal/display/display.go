@@ -66,7 +66,6 @@ func (d *Displayer) getImageData(ctx context.Context, img *models.GeneratedImage
 }
 
 func (d *Displayer) downloadImage(ctx context.Context, url string) ([]byte, error) {
-	// Validate URL to prevent SSRF attacks
 	if err := security.ValidateImageURL(url, false); err != nil {
 		return nil, fmt.Errorf("URL validation failed: %w", err)
 	}

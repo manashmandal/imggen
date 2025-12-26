@@ -254,7 +254,6 @@ func generateFilename(index int, prompt string, format models.OutputFormat) stri
 	return fmt.Sprintf("%03d-%s.%s", index, sanitized, format)
 }
 
-// windowsReservedNames contains names reserved on Windows filesystems
 var windowsReservedNames = map[string]bool{
 	"con": true, "prn": true, "aux": true, "nul": true,
 	"com1": true, "com2": true, "com3": true, "com4": true,
@@ -268,8 +267,6 @@ func sanitizePrompt(prompt string) string {
 	sanitized := reg.ReplaceAllString(prompt, "")
 	sanitized = strings.ToLower(sanitized)
 	sanitized = strings.Join(strings.Fields(sanitized), "-")
-
-	// Ensure filename doesn't start with hyphen (could be interpreted as flag)
 	sanitized = strings.TrimLeft(sanitized, "-")
 
 	if len(sanitized) > 50 {
@@ -281,7 +278,6 @@ func sanitizePrompt(prompt string) string {
 		sanitized = "image"
 	}
 
-	// Check for Windows reserved names and append suffix if needed
 	if windowsReservedNames[sanitized] {
 		sanitized = sanitized + "-img"
 	}
