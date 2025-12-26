@@ -362,7 +362,7 @@ func (r *Registrar) backup(configPath string) (string, error) {
 		return "", err
 	}
 
-	if err := os.WriteFile(backupPath, content, 0644); err != nil {
+	if err := os.WriteFile(backupPath, content, 0600); err != nil {
 		return "", err
 	}
 
