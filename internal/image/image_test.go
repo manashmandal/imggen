@@ -10,8 +10,17 @@ import (
 	"testing"
 	"time"
 
+	"github.com/manash/imggen/internal/security"
 	"github.com/manash/imggen/pkg/models"
 )
+
+func TestMain(m *testing.M) {
+	// Disable URL validation for tests using httptest
+	security.SetSkipValidation(true)
+	code := m.Run()
+	security.SetSkipValidation(false)
+	os.Exit(code)
+}
 
 func TestNewSaver(t *testing.T) {
 	s := NewSaver()

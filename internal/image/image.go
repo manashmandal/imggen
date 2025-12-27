@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/manash/imggen/internal/security"
 	"github.com/manash/imggen/pkg/models"
 )
 
@@ -66,6 +67,10 @@ func (s *Saver) SaveAll(ctx context.Context, resp *models.Response, basePath str
 }
 
 func (s *Saver) downloadFromURL(ctx context.Context, url string) ([]byte, error) {
+	if err := security.ValidateImageURL(url, false); err != nil {
+		return nil, fmt.Errorf("URL validation failed: %w", err)
+	}
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err

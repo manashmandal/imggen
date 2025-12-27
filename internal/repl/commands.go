@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/manash/imggen/internal/security"
 	"github.com/manash/imggen/internal/session"
 	"github.com/manash/imggen/pkg/models"
 )
@@ -301,6 +302,9 @@ func (c *SaveCommand) Execute(_ context.Context, r *REPL, args []string) error {
 	var destPath string
 	if len(args) > 0 {
 		destPath = args[0]
+		if err := security.ValidateSavePath(destPath); err != nil {
+			return fmt.Errorf("invalid save path: %w", err)
+		}
 	} else {
 		destPath = filepath.Base(currentPath)
 	}

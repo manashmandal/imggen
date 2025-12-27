@@ -254,18 +254,34 @@ func generateFilename(index int, prompt string, format models.OutputFormat) stri
 	return fmt.Sprintf("%03d-%s.%s", index, sanitized, format)
 }
 
+var windowsReservedNames = map[string]bool{
+	"con": true, "prn": true, "aux": true, "nul": true,
+	"com1": true, "com2": true, "com3": true, "com4": true,
+	"com5": true, "com6": true, "com7": true, "com8": true, "com9": true,
+	"lpt1": true, "lpt2": true, "lpt3": true, "lpt4": true,
+	"lpt5": true, "lpt6": true, "lpt7": true, "lpt8": true, "lpt9": true,
+}
+
 func sanitizePrompt(prompt string) string {
 	reg := regexp.MustCompile(`[^a-zA-Z0-9\s-]`)
 	sanitized := reg.ReplaceAllString(prompt, "")
 	sanitized = strings.ToLower(sanitized)
 	sanitized = strings.Join(strings.Fields(sanitized), "-")
+	sanitized = strings.TrimLeft(sanitized, "-")
+
 	if len(sanitized) > 50 {
 		sanitized = sanitized[:50]
 	}
 	sanitized = strings.TrimSuffix(sanitized, "-")
+
 	if sanitized == "" {
 		sanitized = "image"
 	}
+
+	if windowsReservedNames[sanitized] {
+		sanitized = sanitized + "-img"
+	}
+
 	return sanitized
 }
 

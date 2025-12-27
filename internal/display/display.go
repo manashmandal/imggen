@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/manash/imggen/internal/security"
 	"github.com/manash/imggen/pkg/models"
 )
 
@@ -65,6 +66,10 @@ func (d *Displayer) getImageData(ctx context.Context, img *models.GeneratedImage
 }
 
 func (d *Displayer) downloadImage(ctx context.Context, url string) ([]byte, error) {
+	if err := security.ValidateImageURL(url, false); err != nil {
+		return nil, fmt.Errorf("URL validation failed: %w", err)
+	}
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
