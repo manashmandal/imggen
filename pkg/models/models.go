@@ -17,6 +17,7 @@ var (
 	ErrInvalidTransparencyFormat = errors.New("transparent background requires png or webp format")
 	ErrEditNotSupported          = errors.New("image editing not supported by model")
 	ErrNoImageData               = errors.New("image data is required for editing")
+	ErrInvalidDuration           = errors.New("invalid duration for model")
 )
 
 type ProviderType string
@@ -45,6 +46,12 @@ func (f OutputFormat) IsValid() bool {
 func (f OutputFormat) String() string {
 	return string(f)
 }
+
+type VideoFormat string
+
+const (
+	FormatMP4 VideoFormat = "mp4"
+)
 
 type Request struct {
 	Prompt      string
@@ -114,6 +121,34 @@ type GeneratedImage struct {
 	Filename string
 }
 
+// VideoRequest represents a request for video generation
+type VideoRequest struct {
+	Prompt   string
+	Model    string
+	Duration int
+	Size     string
+}
+
+// NewVideoRequest creates a new VideoRequest with default values
+func NewVideoRequest(prompt string) *VideoRequest {
+	return &VideoRequest{
+		Prompt: prompt,
+	}
+}
+
+// VideoResponse represents the response from video generation
+type VideoResponse struct {
+	Videos []GeneratedVideo
+	Cost   *CostInfo
+}
+
+// GeneratedVideo represents a single generated video
+type GeneratedVideo struct {
+	Data     []byte
+	URL      string
+	Filename string
+}
+
 type ModelCapabilities struct {
 	Name                 string
 	Provider             ProviderType
@@ -180,15 +215,57 @@ func (c *ModelCapabilities) ApplyDefaults(req *Request) {
 	}
 }
 
+// VideoModelCapabilities defines the capabilities of a video generation model
+type VideoModelCapabilities struct {
+	Name               string
+	Provider           ProviderType
+	SupportedDurations []int
+	SupportedSizes     []string
+	DefaultDuration    int
+	DefaultSize        string
+}
+
+// Validate checks if a VideoRequest is valid for this model's capabilities
+func (c *VideoModelCapabilities) Validate(req *VideoRequest) error {
+	if req.Prompt == "" {
+		return ErrEmptyPrompt
+	}
+
+	if req.Duration != 0 && len(c.SupportedDurations) > 0 && !slices.Contains(c.SupportedDurations, req.Duration) {
+		return fmt.Errorf("%w: %d not in %v", ErrInvalidDuration, req.Duration, c.SupportedDurations)
+	}
+
+	if req.Size != "" && len(c.SupportedSizes) > 0 && !slices.Contains(c.SupportedSizes, req.Size) {
+		return fmt.Errorf("%w: %q not in %v", ErrInvalidSize, req.Size, c.SupportedSizes)
+	}
+
+	return nil
+}
+
+// ApplyDefaults sets default values for unspecified fields in VideoRequest
+func (c *VideoModelCapabilities) ApplyDefaults(req *VideoRequest) {
+	if req.Duration == 0 {
+		req.Duration = c.DefaultDuration
+	}
+	if req.Size == "" {
+		req.Size = c.DefaultSize
+	}
+	if req.Model == "" {
+		req.Model = c.Name
+	}
+}
+
 type ModelRegistry struct {
-	models    map[string]*ModelCapabilities
-	ocrModels map[string]*OCRModelCapabilities
+	models      map[string]*ModelCapabilities
+	ocrModels   map[string]*OCRModelCapabilities
+	videoModels map[string]*VideoModelCapabilities
 }
 
 func NewModelRegistry() *ModelRegistry {
 	return &ModelRegistry{
-		models:    make(map[string]*ModelCapabilities),
-		ocrModels: make(map[string]*OCRModelCapabilities),
+		models:      make(map[string]*ModelCapabilities),
+		ocrModels:   make(map[string]*OCRModelCapabilities),
+		videoModels: make(map[string]*VideoModelCapabilities),
 	}
 }
 
@@ -215,6 +292,26 @@ func (r *ModelRegistry) ListByProvider(provider ProviderType) []string {
 		if cap.Provider == provider {
 			names = append(names, name)
 		}
+	}
+	return names
+}
+
+// RegisterVideo adds a video model to the registry
+func (r *ModelRegistry) RegisterVideo(cap *VideoModelCapabilities) {
+	r.videoModels[cap.Name] = cap
+}
+
+// GetVideo retrieves a video model from the registry
+func (r *ModelRegistry) GetVideo(name string) (*VideoModelCapabilities, bool) {
+	cap, ok := r.videoModels[name]
+	return cap, ok
+}
+
+// ListVideoModels returns all registered video model names
+func (r *ModelRegistry) ListVideoModels() []string {
+	names := make([]string, 0, len(r.videoModels))
+	for name := range r.videoModels {
+		names = append(names, name)
 	}
 	return names
 }
@@ -309,6 +406,25 @@ func DefaultRegistry() *ModelRegistry {
 		MaxImageSize:     20 * 1024 * 1024, // 20MB
 		SupportsSchema:   true,
 		DefaultMaxTokens: 16384,
+	})
+
+	// Video models (OpenAI Sora)
+	r.RegisterVideo(&VideoModelCapabilities{
+		Name:               "sora-2",
+		Provider:           ProviderOpenAI,
+		SupportedDurations: []int{4, 8, 12},
+		SupportedSizes:     []string{"720x1280", "1280x720", "1024x1792", "1792x1024"},
+		DefaultDuration:    4,
+		DefaultSize:        "720x1280",
+	})
+
+	r.RegisterVideo(&VideoModelCapabilities{
+		Name:               "sora-2-pro",
+		Provider:           ProviderOpenAI,
+		SupportedDurations: []int{4, 8, 12, 16, 20},
+		SupportedSizes:     []string{"720x1280", "1280x720", "1024x1792", "1792x1024", "1080x1920", "1920x1080"},
+		DefaultDuration:    4,
+		DefaultSize:        "720x1280",
 	})
 
 	return r
