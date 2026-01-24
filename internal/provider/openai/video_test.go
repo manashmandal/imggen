@@ -628,3 +628,159 @@ func TestProvider_GenerateVideo_NoDuration(t *testing.T) {
 		t.Fatalf("GenerateVideo() without duration error = %v", err)
 	}
 }
+
+func TestProvider_GenerateVideo_Status201Created(t *testing.T) {
+	requestCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/videos"):
+			// Return 201 Created instead of 200 OK
+			w.WriteHeader(http.StatusCreated)
+			resp := videoJobResponse{ID: "video_201", Status: "queued"}
+			json.NewEncoder(w).Encode(resp)
+
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/videos/video_201") && !strings.HasSuffix(r.URL.Path, "/content"):
+			requestCount++
+			resp := videoJobResponse{ID: "video_201", Status: "completed"}
+			json.NewEncoder(w).Encode(resp)
+
+		case strings.HasSuffix(r.URL.Path, "/content"):
+			w.Write([]byte("video"))
+		}
+	}))
+	defer server.Close()
+
+	cfg := &provider.Config{APIKey: "test-key", BaseURL: server.URL}
+	p, _ := New(cfg, models.DefaultRegistry())
+
+	originalPollInterval := defaultPollInterval
+	defaultPollInterval = 10 * time.Millisecond
+	defer func() { defaultPollInterval = originalPollInterval }()
+
+	req := &models.VideoRequest{Model: "sora-2", Prompt: "test"}
+
+	_, err := p.GenerateVideo(context.Background(), req)
+	if err != nil {
+		t.Fatalf("GenerateVideo() with 201 status error = %v", err)
+	}
+}
+
+func TestProvider_GenerateVideo_PollNetworkError(t *testing.T) {
+	callCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/videos"):
+			resp := videoJobResponse{ID: "video_poll_err", Status: "queued"}
+			json.NewEncoder(w).Encode(resp)
+
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/videos/video_poll_err"):
+			callCount++
+			// Close connection to simulate network error
+			hj, ok := w.(http.Hijacker)
+			if ok {
+				conn, _, _ := hj.Hijack()
+				conn.Close()
+			}
+		}
+	}))
+	defer server.Close()
+
+	cfg := &provider.Config{APIKey: "test-key", BaseURL: server.URL}
+	p, _ := New(cfg, models.DefaultRegistry())
+
+	originalPollInterval := defaultPollInterval
+	defaultPollInterval = 10 * time.Millisecond
+	defer func() { defaultPollInterval = originalPollInterval }()
+
+	req := &models.VideoRequest{Model: "sora-2", Prompt: "test"}
+
+	_, err := p.GenerateVideo(context.Background(), req)
+	if err == nil {
+		t.Fatal("GenerateVideo() expected error for poll network failure")
+	}
+}
+
+func TestProvider_GenerateVideo_DownloadNetworkError(t *testing.T) {
+	requestCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/videos"):
+			resp := videoJobResponse{ID: "video_dl_err", Status: "queued"}
+			json.NewEncoder(w).Encode(resp)
+
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/videos/video_dl_err") && !strings.HasSuffix(r.URL.Path, "/content"):
+			requestCount++
+			resp := videoJobResponse{ID: "video_dl_err", Status: "completed"}
+			json.NewEncoder(w).Encode(resp)
+
+		case strings.HasSuffix(r.URL.Path, "/content"):
+			// Close connection to simulate download error
+			hj, ok := w.(http.Hijacker)
+			if ok {
+				conn, _, _ := hj.Hijack()
+				conn.Close()
+			}
+		}
+	}))
+	defer server.Close()
+
+	cfg := &provider.Config{APIKey: "test-key", BaseURL: server.URL}
+	p, _ := New(cfg, models.DefaultRegistry())
+
+	originalPollInterval := defaultPollInterval
+	defaultPollInterval = 10 * time.Millisecond
+	defer func() { defaultPollInterval = originalPollInterval }()
+
+	req := &models.VideoRequest{Model: "sora-2", Prompt: "test"}
+
+	_, err := p.GenerateVideo(context.Background(), req)
+	if err == nil {
+		t.Fatal("GenerateVideo() expected error for download network failure")
+	}
+}
+
+func TestProvider_GenerateVideo_NoSize(t *testing.T) {
+	requestCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/videos"):
+			// Verify size is NOT passed when empty
+			if err := r.ParseMultipartForm(32 << 20); err != nil {
+				t.Errorf("Failed to parse multipart form: %v", err)
+			}
+			if r.FormValue("size") != "" {
+				t.Errorf("Expected no size field, got %s", r.FormValue("size"))
+			}
+
+			resp := videoJobResponse{ID: "video_nosize", Status: "queued"}
+			json.NewEncoder(w).Encode(resp)
+
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/videos/video_nosize") && !strings.HasSuffix(r.URL.Path, "/content"):
+			requestCount++
+			resp := videoJobResponse{ID: "video_nosize", Status: "completed"}
+			json.NewEncoder(w).Encode(resp)
+
+		case strings.HasSuffix(r.URL.Path, "/content"):
+			w.Write([]byte("video"))
+		}
+	}))
+	defer server.Close()
+
+	cfg := &provider.Config{APIKey: "test-key", BaseURL: server.URL}
+	p, _ := New(cfg, models.DefaultRegistry())
+
+	originalPollInterval := defaultPollInterval
+	defaultPollInterval = 10 * time.Millisecond
+	defer func() { defaultPollInterval = originalPollInterval }()
+
+	req := &models.VideoRequest{
+		Model:  "sora-2",
+		Prompt: "test",
+		Size:   "", // No size specified
+	}
+
+	_, err := p.GenerateVideo(context.Background(), req)
+	if err != nil {
+		t.Fatalf("GenerateVideo() without size error = %v", err)
+	}
+}
