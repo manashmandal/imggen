@@ -423,3 +423,126 @@ func TestCalculator_CalculateOCR_ExactPricing(t *testing.T) {
 		t.Errorf("CalculateOCR('gpt-5-nano', 1M, 1M).Total = %v, want %v", result.Total, expectedCost)
 	}
 }
+
+func TestCalculator_CalculateVideo(t *testing.T) {
+	c := NewCalculator()
+
+	tests := []struct {
+		name     string
+		model    string
+		duration int
+		wantCost float64
+	}{
+		{
+			name:     "sora-2 4 seconds",
+			model:    "sora-2",
+			duration: 4,
+			wantCost: 0.40, // $0.10/sec * 4
+		},
+		{
+			name:     "sora-2 12 seconds",
+			model:    "sora-2",
+			duration: 12,
+			wantCost: 1.20, // $0.10/sec * 12
+		},
+		{
+			name:     "sora-2-pro 8 seconds",
+			model:    "sora-2-pro",
+			duration: 8,
+			wantCost: 2.40, // $0.30/sec * 8
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cost := c.CalculateVideo(models.ProviderOpenAI, tt.model, tt.duration)
+			if !floatEquals(cost.Total, tt.wantCost) {
+				t.Errorf("CalculateVideo() total = %v, want %v", cost.Total, tt.wantCost)
+			}
+		})
+	}
+}
+
+func TestCalculator_CalculateVideo_UnknownModel(t *testing.T) {
+	c := NewCalculator()
+
+	// Unknown model should default to sora-2 pricing ($0.10/sec)
+	cost := c.CalculateVideo(models.ProviderOpenAI, "unknown-video-model", 10)
+	expected := 1.0 // $0.10 * 10 seconds
+
+	if !floatEquals(cost.Total, expected) {
+		t.Errorf("CalculateVideo() with unknown model total = %v, want %v", cost.Total, expected)
+	}
+}
+
+func TestCalculator_CalculateVideo_UnknownProvider(t *testing.T) {
+	c := NewCalculator()
+
+	// Unknown provider should return 0 cost
+	cost := c.CalculateVideo("unknown-provider", "sora-2", 10)
+
+	if cost.Total != 0 {
+		t.Errorf("CalculateVideo() with unknown provider total = %v, want 0", cost.Total)
+	}
+}
+
+func TestCalculator_CalculateVideo_ZeroDuration(t *testing.T) {
+	c := NewCalculator()
+
+	cost := c.CalculateVideo(models.ProviderOpenAI, "sora-2", 0)
+
+	if cost.Total != 0 {
+		t.Errorf("CalculateVideo() with zero duration total = %v, want 0", cost.Total)
+	}
+}
+
+func TestCalculator_CalculateVideo_CostInfoStructure(t *testing.T) {
+	c := NewCalculator()
+
+	cost := c.CalculateVideo(models.ProviderOpenAI, "sora-2-pro", 4)
+
+	if cost == nil {
+		t.Fatal("CalculateVideo() returned nil")
+	}
+	if !floatEquals(cost.PerImage, 0.30) {
+		t.Errorf("PerImage (price per second) = %.4f, want 0.30", cost.PerImage)
+	}
+	if !floatEquals(cost.Total, 1.20) {
+		t.Errorf("Total = %.4f, want 1.20", cost.Total)
+	}
+	if cost.Currency != CurrencyUSD {
+		t.Errorf("Currency = %s, want %s", cost.Currency, CurrencyUSD)
+	}
+}
+
+func TestGetVideoPricePerSecond_Found(t *testing.T) {
+	tests := []struct {
+		model string
+		want  float64
+	}{
+		{"sora-2", 0.10},
+		{"sora-2-pro", 0.30},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.model, func(t *testing.T) {
+			price, ok := GetVideoPricePerSecond(tt.model)
+			if !ok {
+				t.Errorf("GetVideoPricePerSecond(%q) returned false", tt.model)
+			}
+			if price != tt.want {
+				t.Errorf("GetVideoPricePerSecond(%q) = %v, want %v", tt.model, price, tt.want)
+			}
+		})
+	}
+}
+
+func TestGetVideoPricePerSecond_NotFound(t *testing.T) {
+	price, ok := GetVideoPricePerSecond("unknown-model")
+	if ok {
+		t.Error("GetVideoPricePerSecond() returned true for unknown model")
+	}
+	if price != 0 {
+		t.Errorf("GetVideoPricePerSecond() = %v, want 0", price)
+	}
+}

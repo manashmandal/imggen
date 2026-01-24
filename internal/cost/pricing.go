@@ -50,3 +50,14 @@ func GetOpenAIPrice(model, size, quality string) (float64, bool) {
 	price, ok := openAIPricing[key]
 	return price, ok
 }
+
+// Video pricing (USD per second)
+var videoPricing = map[string]float64{
+	"sora-2":     0.10, // $0.10 per second
+	"sora-2-pro": 0.30, // $0.30 per second (720p estimate)
+}
+
+func GetVideoPricePerSecond(model string) (float64, bool) {
+	price, ok := videoPricing[model]
+	return price, ok
+}
