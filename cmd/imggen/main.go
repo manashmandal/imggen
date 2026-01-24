@@ -119,20 +119,26 @@ func run() error {
 func newRootCmd(app *App) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "imggen [prompt]",
-		Short: "Generate images using AI image generation APIs",
-		Long: `imggen is a CLI tool for generating images using AI image generation APIs.
+		Short: "Generate images and videos using AI generation APIs",
+		Long: `imggen is a CLI tool for generating images and videos using AI APIs.
 
 Supported providers:
   - OpenAI (gpt-image-1, dall-e-3, dall-e-2)
+  - OpenAI Video (sora-2, sora-2-pro)
 
 Note: Only OpenAI is currently supported. Other providers (Stability AI, etc.) are work in progress.
 
-Examples:
+Image Generation Examples:
   imggen "a sunset over mountains"
   imggen -m dall-e-3 -s 1792x1024 -q hd "panoramic cityscape"
   imggen -m gpt-image-1 -n 3 --transparent "logo design"
   imggen --prompt "a sunset" --prompt "a cat" -o ./output
-  imggen -i  # start interactive mode`,
+  imggen -i  # start interactive mode
+
+Video Generation Examples:
+  imggen video "a cat walking on a beach"
+  imggen video -m sora-2-pro -d 8 "sunset over mountains"
+  imggen video -s 1280x720 -o myvideo.mp4 "dancing robot"`,
 		Args: func(cmd *cobra.Command, args []string) error {
 			if flagInteractive {
 				return nil
