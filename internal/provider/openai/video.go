@@ -21,15 +21,15 @@ var (
 )
 
 type videoJobResponse struct {
-	ID        string    `json:"id"`
-	Object    string    `json:"object"`
-	CreatedAt int64     `json:"created_at"`
-	Status    string    `json:"status"`
-	Model     string    `json:"model"`
-	Progress  int       `json:"progress"`
-	Seconds   int       `json:"seconds,omitempty"`
-	Size      string    `json:"size,omitempty"`
-	Error     *apiError `json:"error,omitempty"`
+	ID        string          `json:"id"`
+	Object    string          `json:"object"`
+	CreatedAt int64           `json:"created_at"`
+	Status    string          `json:"status"`
+	Model     string          `json:"model"`
+	Progress  json.RawMessage `json:"progress,omitempty"` // Can be int or string
+	Seconds   json.RawMessage `json:"seconds,omitempty"`  // Can be int or string
+	Size      string          `json:"size,omitempty"`
+	Error     *apiError       `json:"error,omitempty"`
 }
 
 // GenerateVideo generates a video using OpenAI's Sora API

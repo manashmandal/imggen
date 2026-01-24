@@ -29,8 +29,8 @@ func TestProvider_GenerateVideo_Success(t *testing.T) {
 				CreatedAt: time.Now().Unix(),
 				Status:    "queued",
 				Model:     "sora-2",
-				Progress:  0,
-				Seconds:   4,
+				Progress:  json.RawMessage("0"),
+				Seconds:   json.RawMessage("4"),
 				Size:      "1280x720",
 			}
 			w.Header().Set("Content-Type", "application/json")
@@ -39,10 +39,10 @@ func TestProvider_GenerateVideo_Success(t *testing.T) {
 		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/videos/video_123") && !strings.HasSuffix(r.URL.Path, "/content"):
 			requestCount++
 			status := "in_progress"
-			progress := 50
+			progress := "50"
 			if requestCount >= 2 {
 				status = "completed"
-				progress = 100
+				progress = "100"
 			}
 
 			resp := videoJobResponse{
@@ -51,8 +51,8 @@ func TestProvider_GenerateVideo_Success(t *testing.T) {
 				CreatedAt: time.Now().Unix(),
 				Status:    status,
 				Model:     "sora-2",
-				Progress:  progress,
-				Seconds:   4,
+				Progress:  json.RawMessage(progress),
+				Seconds:   json.RawMessage("4"),
 				Size:      "1280x720",
 			}
 			w.Header().Set("Content-Type", "application/json")
@@ -302,12 +302,12 @@ func TestProvider_GenerateVideo_Cost(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/videos"):
-			resp := videoJobResponse{ID: "video_cost", Status: "queued", Seconds: 4}
+			resp := videoJobResponse{ID: "video_cost", Status: "queued", Seconds: json.RawMessage("4")}
 			json.NewEncoder(w).Encode(resp)
 
 		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/videos/video_cost") && !strings.HasSuffix(r.URL.Path, "/content"):
 			requestCount++
-			resp := videoJobResponse{ID: "video_cost", Status: "completed", Seconds: 4}
+			resp := videoJobResponse{ID: "video_cost", Status: "completed", Seconds: json.RawMessage("4")}
 			json.NewEncoder(w).Encode(resp)
 
 		case strings.HasSuffix(r.URL.Path, "/content"):
