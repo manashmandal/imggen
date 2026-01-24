@@ -9,12 +9,15 @@ import (
 )
 
 var (
-	ErrProviderNotFound  = errors.New("provider not found")
-	ErrModelNotSupported = errors.New("model not supported by provider")
-	ErrAPIKeyRequired    = errors.New("API key is required")
-	ErrGenerationFailed  = errors.New("image generation failed")
-	ErrEditFailed        = errors.New("image edit failed")
-	ErrEditNotSupported  = errors.New("image editing not supported by model")
+	ErrProviderNotFound      = errors.New("provider not found")
+	ErrModelNotSupported     = errors.New("model not supported by provider")
+	ErrAPIKeyRequired        = errors.New("API key is required")
+	ErrGenerationFailed      = errors.New("image generation failed")
+	ErrEditFailed            = errors.New("image edit failed")
+	ErrEditNotSupported      = errors.New("image editing not supported by model")
+	ErrVideoGenerationFailed = errors.New("video generation failed")
+	ErrVideoNotReady         = errors.New("video not ready")
+	ErrVideoDownloadFailed   = errors.New("video download failed")
 )
 
 type Provider interface {
@@ -24,6 +27,13 @@ type Provider interface {
 	SupportsModel(model string) bool
 	SupportsEdit(model string) bool
 	ListModels() []string
+}
+
+// VideoProvider interface for video generation capabilities
+type VideoProvider interface {
+	GenerateVideo(ctx context.Context, req *models.VideoRequest) (*models.VideoResponse, error)
+	SupportsVideoModel(model string) bool
+	ListVideoModels() []string
 }
 
 type Config struct {

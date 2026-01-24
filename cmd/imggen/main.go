@@ -72,6 +72,13 @@ var (
 	flagOCRURL           string
 )
 
+var (
+	flagVideoModel    string
+	flagVideoDuration int
+	flagVideoSize     string
+	flagVideoOutput   string
+)
+
 type App struct {
 	Out          io.Writer
 	Err          io.Writer
@@ -112,20 +119,26 @@ func run() error {
 func newRootCmd(app *App) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "imggen [prompt]",
-		Short: "Generate images using AI image generation APIs",
-		Long: `imggen is a CLI tool for generating images using AI image generation APIs.
+		Short: "Generate images and videos using AI generation APIs",
+		Long: `imggen is a CLI tool for generating images and videos using AI APIs.
 
 Supported providers:
   - OpenAI (gpt-image-1, dall-e-3, dall-e-2)
+  - OpenAI Video (sora-2, sora-2-pro)
 
 Note: Only OpenAI is currently supported. Other providers (Stability AI, etc.) are work in progress.
 
-Examples:
+Image Generation Examples:
   imggen "a sunset over mountains"
   imggen -m dall-e-3 -s 1792x1024 -q hd "panoramic cityscape"
   imggen -m gpt-image-1 -n 3 --transparent "logo design"
   imggen --prompt "a sunset" --prompt "a cat" -o ./output
-  imggen -i  # start interactive mode`,
+  imggen -i  # start interactive mode
+
+Video Generation Examples:
+  imggen video "a cat walking on a beach"
+  imggen video -m sora-2-pro -d 8 "sunset over mountains"
+  imggen video -s 1280x720 -o myvideo.mp4 "dancing robot"`,
 		Args: func(cmd *cobra.Command, args []string) error {
 			if flagInteractive {
 				return nil
@@ -165,6 +178,7 @@ Examples:
 	cmd.AddCommand(newRegisterCmd(app))
 	cmd.AddCommand(newKeysCmd(app))
 	cmd.AddCommand(newOCRCmd(app))
+	cmd.AddCommand(newVideoCmd(app))
 
 	return cmd
 }
@@ -1276,6 +1290,126 @@ func runOCR(_ *cobra.Command, args []string, app *App) error {
 		}
 	}
 
+	return nil
+}
+
+// Video command
+
+func newVideoCmd(app *App) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "video <prompt>",
+		Short: "Generate videos using AI video generation APIs",
+		Long: `Generate videos using OpenAI's Sora video generation API.
+
+Supported models:
+  - sora-2 (default): Standard quality, up to 12 seconds
+  - sora-2-pro: Higher quality, up to 20 seconds
+
+Examples:
+  imggen video "a cat walking on a beach"
+  imggen video -m sora-2-pro -d 8 "sunset over mountains"
+  imggen video -s 1280x720 -o myvideo.mp4 "dancing robot"`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runVideo(cmd, args, app)
+		},
+	}
+
+	cmd.Flags().StringVarP(&flagVideoModel, "model", "m", "sora-2", "model to use (sora-2, sora-2-pro)")
+	cmd.Flags().IntVarP(&flagVideoDuration, "duration", "d", 0, "video duration in seconds (default: model default)")
+	cmd.Flags().StringVarP(&flagVideoSize, "size", "s", "", "video size (e.g., 1280x720)")
+	cmd.Flags().StringVarP(&flagVideoOutput, "output", "o", "", "output filename")
+	cmd.Flags().StringVar(&flagAPIKey, "api-key", "", "API key (defaults to OPENAI_API_KEY)")
+	cmd.Flags().BoolVarP(&flagVerbose, "verbose", "v", false, "log HTTP requests and responses")
+
+	return cmd
+}
+
+func runVideo(_ *cobra.Command, args []string, app *App) error {
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
+
+	// Get API key using priority: --api-key flag > stored key > env var
+	apiKey, _, err := keys.GetAPIKey(flagAPIKey, "openai", "OPENAI_API_KEY")
+	if err != nil {
+		return err
+	}
+
+	prompt := args[0]
+
+	req := models.NewVideoRequest(prompt)
+	req.Model = flagVideoModel
+	req.Duration = flagVideoDuration
+	req.Size = flagVideoSize
+
+	caps, ok := app.Registry.GetVideo(flagVideoModel)
+	if !ok {
+		return fmt.Errorf("unknown video model %q: available models: %v", flagVideoModel, app.Registry.ListVideoModels())
+	}
+
+	caps.ApplyDefaults(req)
+
+	if err := caps.Validate(req); err != nil {
+		return fmt.Errorf("invalid request: %w", err)
+	}
+
+	providerCfg := &provider.Config{APIKey: apiKey, Verbose: flagVerbose}
+	prov, err := app.NewProvider(providerCfg, app.Registry)
+	if err != nil {
+		return fmt.Errorf("failed to create provider: %w", err)
+	}
+
+	videoProv, ok := prov.(provider.VideoProvider)
+	if !ok {
+		return fmt.Errorf("provider does not support video generation")
+	}
+
+	fmt.Fprintf(app.Out, "Generating video with %s (%d seconds)...\n", req.Model, req.Duration)
+
+	resp, err := videoProv.GenerateVideo(ctx, req)
+	if err != nil {
+		return fmt.Errorf("video generation failed: %w", err)
+	}
+
+	saver := app.NewSaver()
+
+	// Determine output path
+	outputPath := flagVideoOutput
+	if outputPath == "" {
+		outputPath = image.GenerateVideoFilename(0)
+	}
+
+	if len(resp.Videos) > 0 {
+		if err := saver.SaveVideo(ctx, &resp.Videos[0], outputPath); err != nil {
+			return fmt.Errorf("failed to save video: %w", err)
+		}
+		fmt.Fprintf(app.Out, "Saved: %s\n", outputPath)
+	}
+
+	if resp.Cost != nil {
+		fmt.Fprintf(app.Out, "Cost: $%.4f (%d seconds @ $%.4f/second, %s)\n",
+			resp.Cost.Total, req.Duration, resp.Cost.PerImage, req.Model)
+
+		// Log cost to database
+		store, err := session.NewStore()
+		if err == nil {
+			defer store.Close()
+			costEntry := &session.CostEntry{
+				IterationID: "",
+				SessionID:   "",
+				Provider:    string(prov.Name()),
+				Model:       req.Model,
+				Cost:        resp.Cost.Total,
+				ImageCount:  1, // Count as 1 item for video
+				Timestamp:   time.Now(),
+			}
+			if logErr := store.LogCost(ctx, costEntry); logErr != nil {
+				fmt.Fprintf(app.Err, "Warning: failed to log cost: %v\n", logErr)
+			}
+		}
+	}
+
+	fmt.Fprintln(app.Out, "Done!")
 	return nil
 }
 

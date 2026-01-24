@@ -535,3 +535,170 @@ func TestGenerateFilename_AllFormats(t *testing.T) {
 		}
 	}
 }
+
+func TestSaver_SaveVideo(t *testing.T) {
+	s := NewSaver()
+	tmpDir := t.TempDir()
+
+	video := &models.GeneratedVideo{
+		Data: []byte("fake video content"),
+	}
+
+	path := filepath.Join(tmpDir, "test.mp4")
+	err := s.SaveVideo(context.Background(), video, path)
+	if err != nil {
+		t.Fatalf("SaveVideo() error = %v", err)
+	}
+
+	// Verify file exists
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("failed to read saved file: %v", err)
+	}
+	if string(data) != "fake video content" {
+		t.Errorf("saved content mismatch")
+	}
+	if video.Filename != path {
+		t.Errorf("Filename = %s, want %s", video.Filename, path)
+	}
+}
+
+func TestSaver_SaveVideo_NoData(t *testing.T) {
+	s := NewSaver()
+	tmpDir := t.TempDir()
+
+	video := &models.GeneratedVideo{} // no data, no URL
+
+	path := filepath.Join(tmpDir, "test.mp4")
+	err := s.SaveVideo(context.Background(), video, path)
+	if err == nil {
+		t.Fatal("SaveVideo() expected error for empty video, got nil")
+	}
+}
+
+func TestGenerateVideoFilename(t *testing.T) {
+	filename := GenerateVideoFilename(0)
+	if !strings.HasPrefix(filename, "video-") {
+		t.Errorf("GenerateVideoFilename() should start with 'video-', got %s", filename)
+	}
+	if !strings.HasSuffix(filename, ".mp4") {
+		t.Errorf("GenerateVideoFilename() should end with '.mp4', got %s", filename)
+	}
+}
+
+func TestGenerateVideoFilename_WithIndex(t *testing.T) {
+	filename := GenerateVideoFilename(2)
+	if !strings.Contains(filename, "-3") {
+		t.Errorf("GenerateVideoFilename(2) should contain '-3' for index+1, got %s", filename)
+	}
+}
+
+func TestSaver_SaveVideo_WithURL(t *testing.T) {
+	expectedData := []byte("downloaded video content")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(expectedData)
+	}))
+	defer server.Close()
+
+	s := NewSaver()
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "downloaded.mp4")
+
+	video := &models.GeneratedVideo{
+		URL: server.URL,
+	}
+
+	err := s.SaveVideo(context.Background(), video, path)
+	if err != nil {
+		t.Fatalf("SaveVideo() error = %v", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("failed to read saved file: %v", err)
+	}
+	if string(data) != string(expectedData) {
+		t.Errorf("saved data mismatch")
+	}
+}
+
+func TestSaver_SaveVideo_DataPreferredOverURL(t *testing.T) {
+	s := NewSaver()
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "test.mp4")
+
+	video := &models.GeneratedVideo{
+		Data: []byte("direct video data"),
+		URL:  "http://should-not-be-called.invalid",
+	}
+
+	err := s.SaveVideo(context.Background(), video, path)
+	if err != nil {
+		t.Fatalf("SaveVideo() error = %v", err)
+	}
+
+	data, _ := os.ReadFile(path)
+	if string(data) != "direct video data" {
+		t.Error("SaveVideo() should prefer Data over URL")
+	}
+}
+
+func TestSaver_SaveVideo_CreatesDirectory(t *testing.T) {
+	s := NewSaver()
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "subdir", "nested", "test.mp4")
+
+	video := &models.GeneratedVideo{
+		Data: []byte("video data"),
+	}
+
+	err := s.SaveVideo(context.Background(), video, path)
+	if err != nil {
+		t.Fatalf("SaveVideo() error = %v", err)
+	}
+
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		t.Error("SaveVideo() did not create nested directory")
+	}
+}
+
+func TestSaver_SaveVideo_DownloadFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	s := NewSaver()
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "should-not-exist.mp4")
+
+	video := &models.GeneratedVideo{
+		URL: server.URL,
+	}
+
+	err := s.SaveVideo(context.Background(), video, path)
+	if err == nil {
+		t.Fatal("SaveVideo() expected error for download failure")
+	}
+	if !strings.Contains(err.Error(), "failed to download video") {
+		t.Errorf("SaveVideo() error = %v, want download error", err)
+	}
+}
+
+func TestSaver_SaveVideo_WriteFailure(t *testing.T) {
+	s := NewSaver()
+	// Use an invalid path that cannot be written to
+	path := "/nonexistent/readonly/path/video.mp4"
+
+	video := &models.GeneratedVideo{
+		Data: []byte("video data"),
+	}
+
+	err := s.SaveVideo(context.Background(), video, path)
+	if err == nil {
+		t.Fatal("SaveVideo() expected error for write failure")
+	}
+	if !strings.Contains(err.Error(), "failed to") {
+		t.Errorf("SaveVideo() error = %v, want write/directory error", err)
+	}
+}

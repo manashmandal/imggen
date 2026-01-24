@@ -71,6 +71,11 @@ func resetFlags() {
 	flagDBBackup = false
 	flagRegisterDryRun = false
 	flagRegisterForce = false
+	// Video flags
+	flagVideoModel = "sora-2"
+	flagVideoDuration = 0
+	flagVideoSize = ""
+	flagVideoOutput = ""
 }
 
 // newTestApp creates an App configured for testing.
@@ -1574,5 +1579,434 @@ func TestRunRollback_InvalidPath(t *testing.T) {
 	err := runRollback(app, "/some/path/without/backup/suffix")
 	if err == nil {
 		t.Error("runRollback() error = nil, want error for invalid backup path format")
+	}
+}
+
+// mockVideoProvider implements both provider.Provider and provider.VideoProvider for testing.
+type mockVideoProvider struct {
+	mockProvider
+	generateVideoFunc func(ctx context.Context, req *models.VideoRequest) (*models.VideoResponse, error)
+}
+
+func (m *mockVideoProvider) GenerateVideo(ctx context.Context, req *models.VideoRequest) (*models.VideoResponse, error) {
+	if m.generateVideoFunc != nil {
+		return m.generateVideoFunc(ctx, req)
+	}
+	return &models.VideoResponse{
+		Videos: []models.GeneratedVideo{
+			{Data: []byte("test video data")},
+		},
+		Cost: &models.CostInfo{
+			PerImage: 0.10,
+			Total:    0.40,
+			Currency: "USD",
+		},
+	}, nil
+}
+
+func (m *mockVideoProvider) SupportsVideoModel(model string) bool {
+	return model == "sora-2" || model == "sora-2-pro"
+}
+
+func (m *mockVideoProvider) ListVideoModels() []string {
+	return []string{"sora-2", "sora-2-pro"}
+}
+
+func newTestAppWithVideoProvider(out *bytes.Buffer, videoProv *mockVideoProvider) *App {
+	return &App{
+		Out:      out,
+		Err:      out,
+		Registry: models.DefaultRegistry(),
+		GetEnv: func(key string) string {
+			return ""
+		},
+		NewProvider: func(cfg *provider.Config, registry *models.ModelRegistry) (provider.Provider, error) {
+			return videoProv, nil
+		},
+		NewSaver:     image.NewSaver,
+		NewDisplayer: display.New,
+	}
+}
+
+func TestNewVideoCmd(t *testing.T) {
+	out := &bytes.Buffer{}
+	app := newTestApp(out)
+	cmd := newVideoCmd(app)
+
+	if cmd.Use != "video <prompt>" {
+		t.Errorf("Use = %s, want 'video <prompt>'", cmd.Use)
+	}
+
+	// Check flags exist
+	flags := []string{"model", "duration", "size", "output", "api-key", "verbose"}
+	for _, name := range flags {
+		if cmd.Flags().Lookup(name) == nil {
+			t.Errorf("flag --%s not found", name)
+		}
+	}
+
+	// Check short flags
+	shortFlags := map[string]string{
+		"m": "model",
+		"d": "duration",
+		"s": "size",
+		"o": "output",
+		"v": "verbose",
+	}
+	for short, long := range shortFlags {
+		flag := cmd.Flags().ShorthandLookup(short)
+		if flag == nil {
+			t.Errorf("short flag -%s not found", short)
+		} else if flag.Name != long {
+			t.Errorf("short flag -%s maps to %s, want %s", short, flag.Name, long)
+		}
+	}
+}
+
+func TestRunVideo_NoAPIKey(t *testing.T) {
+	resetFlags()
+	out := &bytes.Buffer{}
+	app := &App{
+		Out:      out,
+		Err:      out,
+		Registry: models.DefaultRegistry(),
+		GetEnv:   func(key string) string { return "" },
+		NewProvider: func(cfg *provider.Config, registry *models.ModelRegistry) (provider.Provider, error) {
+			return &mockVideoProvider{}, nil
+		},
+		NewSaver:     image.NewSaver,
+		NewDisplayer: display.New,
+	}
+
+	// Override config dir to ensure no stored keys are found
+	tmpDir := t.TempDir()
+	os.Setenv("IMGGEN_CONFIG_DIR", tmpDir)
+	defer os.Unsetenv("IMGGEN_CONFIG_DIR")
+
+	// Ensure OPENAI_API_KEY is not set
+	origKey := os.Getenv("OPENAI_API_KEY")
+	os.Unsetenv("OPENAI_API_KEY")
+	defer func() {
+		if origKey != "" {
+			os.Setenv("OPENAI_API_KEY", origKey)
+		}
+	}()
+
+	cmd := &cobra.Command{}
+	err := runVideo(cmd, []string{"test prompt"}, app)
+
+	if err == nil {
+		t.Error("runVideo() error = nil, want error for missing API key")
+	}
+}
+
+func TestRunVideo_UnknownModel(t *testing.T) {
+	resetFlags()
+	out := &bytes.Buffer{}
+	app := newTestAppWithVideoProvider(out, &mockVideoProvider{})
+
+	flagVideoModel = "unknown-model"
+	flagAPIKey = "test-key"
+
+	cmd := &cobra.Command{}
+	err := runVideo(cmd, []string{"test prompt"}, app)
+
+	if err == nil {
+		t.Error("runVideo() error = nil, want error for unknown model")
+	}
+	if !strings.Contains(err.Error(), "unknown video model") {
+		t.Errorf("error = %v, want error containing 'unknown video model'", err)
+	}
+}
+
+func TestRunVideo_InvalidDuration(t *testing.T) {
+	resetFlags()
+	out := &bytes.Buffer{}
+	app := newTestAppWithVideoProvider(out, &mockVideoProvider{})
+
+	flagVideoModel = "sora-2"
+	flagVideoDuration = 99 // Invalid duration
+	flagAPIKey = "test-key"
+
+	cmd := &cobra.Command{}
+	err := runVideo(cmd, []string{"test prompt"}, app)
+
+	if err == nil {
+		t.Error("runVideo() error = nil, want error for invalid duration")
+	}
+	if !strings.Contains(err.Error(), "invalid request") {
+		t.Errorf("error = %v, want error containing 'invalid request'", err)
+	}
+}
+
+func TestRunVideo_Success(t *testing.T) {
+	resetFlags()
+	out := &bytes.Buffer{}
+
+	tmpDir := t.TempDir()
+	outputPath := filepath.Join(tmpDir, "test-video.mp4")
+
+	mockProv := &mockVideoProvider{}
+	app := newTestAppWithVideoProvider(out, mockProv)
+
+	flagVideoModel = "sora-2"
+	flagVideoDuration = 4
+	flagVideoOutput = outputPath
+	flagAPIKey = "test-key"
+
+	// Override getDBPath for test
+	origGetDBPath := getDBPath
+	getDBPath = func() (string, error) {
+		return filepath.Join(tmpDir, "test.db"), nil
+	}
+	defer func() { getDBPath = origGetDBPath }()
+
+	cmd := &cobra.Command{}
+	err := runVideo(cmd, []string{"a cat walking"}, app)
+
+	if err != nil {
+		t.Errorf("runVideo() error = %v, want nil", err)
+	}
+
+	output := out.String()
+	if !strings.Contains(output, "Generating video") {
+		t.Error("output should contain 'Generating video'")
+	}
+	if !strings.Contains(output, "Saved:") {
+		t.Error("output should contain 'Saved:'")
+	}
+	if !strings.Contains(output, "Cost:") {
+		t.Error("output should contain 'Cost:'")
+	}
+	if !strings.Contains(output, "Done!") {
+		t.Error("output should contain 'Done!'")
+	}
+
+	// Check file was created
+	if _, err := os.Stat(outputPath); os.IsNotExist(err) {
+		t.Error("video file was not created")
+	}
+}
+
+func TestRunVideo_GenerationError(t *testing.T) {
+	resetFlags()
+	out := &bytes.Buffer{}
+
+	mockProv := &mockVideoProvider{
+		generateVideoFunc: func(ctx context.Context, req *models.VideoRequest) (*models.VideoResponse, error) {
+			return nil, errors.New("video generation failed")
+		},
+	}
+	app := newTestAppWithVideoProvider(out, mockProv)
+
+	flagVideoModel = "sora-2"
+	flagAPIKey = "test-key"
+
+	cmd := &cobra.Command{}
+	err := runVideo(cmd, []string{"test prompt"}, app)
+
+	if err == nil {
+		t.Error("runVideo() error = nil, want error")
+	}
+	if !strings.Contains(err.Error(), "video generation failed") {
+		t.Errorf("error = %v, want error containing 'video generation failed'", err)
+	}
+}
+
+func TestRunVideo_WithDefaultFilename(t *testing.T) {
+	resetFlags()
+	out := &bytes.Buffer{}
+
+	tmpDir := t.TempDir()
+
+	mockProv := &mockVideoProvider{}
+	app := newTestAppWithVideoProvider(out, mockProv)
+
+	// Change to temp dir so generated file goes there
+	origDir, _ := os.Getwd()
+	os.Chdir(tmpDir)
+	defer os.Chdir(origDir)
+
+	flagVideoModel = "sora-2"
+	flagVideoOutput = "" // No output specified, should generate filename
+	flagAPIKey = "test-key"
+
+	// Override getDBPath for test
+	origGetDBPath := getDBPath
+	getDBPath = func() (string, error) {
+		return filepath.Join(tmpDir, "test.db"), nil
+	}
+	defer func() { getDBPath = origGetDBPath }()
+
+	cmd := &cobra.Command{}
+	err := runVideo(cmd, []string{"test prompt"}, app)
+
+	if err != nil {
+		t.Errorf("runVideo() error = %v, want nil", err)
+	}
+
+	output := out.String()
+	if !strings.Contains(output, "video-") && !strings.Contains(output, ".mp4") {
+		t.Error("output should contain generated filename with video- prefix and .mp4 extension")
+	}
+}
+
+func TestRunVideo_Sora2Pro(t *testing.T) {
+	resetFlags()
+	out := &bytes.Buffer{}
+
+	tmpDir := t.TempDir()
+	outputPath := filepath.Join(tmpDir, "pro-video.mp4")
+
+	mockProv := &mockVideoProvider{
+		generateVideoFunc: func(ctx context.Context, req *models.VideoRequest) (*models.VideoResponse, error) {
+			if req.Model != "sora-2-pro" {
+				t.Errorf("expected model sora-2-pro, got %s", req.Model)
+			}
+			if req.Duration != 8 {
+				t.Errorf("expected duration 8, got %d", req.Duration)
+			}
+			return &models.VideoResponse{
+				Videos: []models.GeneratedVideo{{Data: []byte("pro video data")}},
+				Cost: &models.CostInfo{
+					PerImage: 0.30,
+					Total:    2.40,
+					Currency: "USD",
+				},
+			}, nil
+		},
+	}
+	app := newTestAppWithVideoProvider(out, mockProv)
+
+	flagVideoModel = "sora-2-pro"
+	flagVideoDuration = 8
+	flagVideoOutput = outputPath
+	flagAPIKey = "test-key"
+
+	// Override getDBPath for test
+	origGetDBPath := getDBPath
+	getDBPath = func() (string, error) {
+		return filepath.Join(tmpDir, "test.db"), nil
+	}
+	defer func() { getDBPath = origGetDBPath }()
+
+	cmd := &cobra.Command{}
+	err := runVideo(cmd, []string{"cinematic sunset"}, app)
+
+	if err != nil {
+		t.Errorf("runVideo() error = %v, want nil", err)
+	}
+
+	output := out.String()
+	if !strings.Contains(output, "sora-2-pro") {
+		t.Error("output should contain model name sora-2-pro")
+	}
+}
+
+func TestRootCmd_HasVideoSubcommand(t *testing.T) {
+	out := &bytes.Buffer{}
+	app := newTestApp(out)
+	cmd := newRootCmd(app)
+
+	var hasVideo bool
+	for _, subcmd := range cmd.Commands() {
+		if subcmd.Name() == "video" {
+			hasVideo = true
+			break
+		}
+	}
+
+	if !hasVideo {
+		t.Error("root command should have 'video' subcommand")
+	}
+}
+
+func TestRunVideo_ProviderNotSupportingVideo(t *testing.T) {
+	resetFlags()
+	out := &bytes.Buffer{}
+
+	// Use base mockProvider which doesn't implement VideoProvider
+	app := &App{
+		Out:      out,
+		Err:      out,
+		Registry: models.DefaultRegistry(),
+		GetEnv:   func(key string) string { return "" },
+		NewProvider: func(cfg *provider.Config, registry *models.ModelRegistry) (provider.Provider, error) {
+			return &mockProvider{}, nil // Not a VideoProvider
+		},
+		NewSaver:     image.NewSaver,
+		NewDisplayer: display.New,
+	}
+
+	flagVideoModel = "sora-2"
+	flagAPIKey = "test-key"
+
+	cmd := &cobra.Command{}
+	err := runVideo(cmd, []string{"test prompt"}, app)
+
+	if err == nil {
+		t.Error("runVideo() error = nil, want error for provider not supporting video")
+	}
+	if !strings.Contains(err.Error(), "does not support video") {
+		t.Errorf("error = %v, want error about video support", err)
+	}
+}
+
+func TestRunVideo_SaveError(t *testing.T) {
+	resetFlags()
+	out := &bytes.Buffer{}
+
+	mockProv := &mockVideoProvider{
+		generateVideoFunc: func(ctx context.Context, req *models.VideoRequest) (*models.VideoResponse, error) {
+			return &models.VideoResponse{
+				Videos: []models.GeneratedVideo{{Data: []byte("video data")}},
+				Cost:   &models.CostInfo{Total: 0.40, PerImage: 0.10, Currency: "USD"},
+			}, nil
+		},
+	}
+	app := newTestAppWithVideoProvider(out, mockProv)
+
+	flagVideoModel = "sora-2"
+	flagVideoOutput = "/nonexistent/directory/video.mp4" // Invalid path
+	flagAPIKey = "test-key"
+
+	cmd := &cobra.Command{}
+	err := runVideo(cmd, []string{"test prompt"}, app)
+
+	if err == nil {
+		t.Error("runVideo() error = nil, want error for save failure")
+	}
+	if !strings.Contains(err.Error(), "failed to save video") {
+		t.Errorf("error = %v, want save error", err)
+	}
+}
+
+func TestRunVideo_ProviderCreationError(t *testing.T) {
+	resetFlags()
+	out := &bytes.Buffer{}
+
+	app := &App{
+		Out:      out,
+		Err:      out,
+		Registry: models.DefaultRegistry(),
+		GetEnv:   func(key string) string { return "" },
+		NewProvider: func(cfg *provider.Config, registry *models.ModelRegistry) (provider.Provider, error) {
+			return nil, errors.New("provider creation failed")
+		},
+		NewSaver:     image.NewSaver,
+		NewDisplayer: display.New,
+	}
+
+	flagVideoModel = "sora-2"
+	flagAPIKey = "test-key"
+
+	cmd := &cobra.Command{}
+	err := runVideo(cmd, []string{"test prompt"}, app)
+
+	if err == nil {
+		t.Error("runVideo() error = nil, want error for provider creation failure")
+	}
+	if !strings.Contains(err.Error(), "failed to create provider") {
+		t.Errorf("error = %v, want provider creation error", err)
 	}
 }

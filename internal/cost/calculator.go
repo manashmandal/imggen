@@ -63,6 +63,31 @@ func (c *Calculator) calculateStability(model, size, quality string) float64 {
 	return 0
 }
 
+// CalculateVideo calculates the cost for video generation
+func (c *Calculator) CalculateVideo(provider models.ProviderType, model string, durationSeconds int) *models.CostInfo {
+	var pricePerSecond float64
+
+	switch provider {
+	case models.ProviderOpenAI:
+		price, ok := GetVideoPricePerSecond(model)
+		if ok {
+			pricePerSecond = price
+		} else {
+			pricePerSecond = 0.10 // default to sora-2 pricing
+		}
+	default:
+		pricePerSecond = 0
+	}
+
+	total := pricePerSecond * float64(durationSeconds)
+
+	return &models.CostInfo{
+		PerImage: pricePerSecond, // Per-second cost stored here
+		Total:    total,
+		Currency: CurrencyUSD,
+	}
+}
+
 // CalculateOCR calculates the cost for OCR operations based on token usage
 // Pricing is per 1M tokens for GPT-5 series models
 func (c *Calculator) CalculateOCR(model string, inputTokens, outputTokens int) *models.CostInfo {
