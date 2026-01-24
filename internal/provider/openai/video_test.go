@@ -494,3 +494,137 @@ func TestProvider_GenerateVideo_WithSize(t *testing.T) {
 		t.Fatalf("GenerateVideo() with size error = %v", err)
 	}
 }
+
+func TestProvider_GenerateVideo_NetworkError(t *testing.T) {
+	// Use an invalid URL to trigger network error
+	cfg := &provider.Config{APIKey: "test-key", BaseURL: "http://localhost:1"}
+	p, _ := New(cfg, models.DefaultRegistry())
+
+	req := &models.VideoRequest{Model: "sora-2", Prompt: "test"}
+
+	_, err := p.GenerateVideo(context.Background(), req)
+	if err == nil {
+		t.Fatal("GenerateVideo() expected error for network failure")
+	}
+	if !strings.Contains(err.Error(), "failed to send request") {
+		t.Errorf("GenerateVideo() error = %v, want network error", err)
+	}
+}
+
+func TestProvider_GenerateVideo_PollTimeout(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/videos"):
+			resp := videoJobResponse{ID: "video_timeout", Status: "queued"}
+			json.NewEncoder(w).Encode(resp)
+
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/videos/video_timeout"):
+			// Always return in_progress to trigger timeout
+			resp := videoJobResponse{ID: "video_timeout", Status: "in_progress"}
+			json.NewEncoder(w).Encode(resp)
+		}
+	}))
+	defer server.Close()
+
+	cfg := &provider.Config{APIKey: "test-key", BaseURL: server.URL}
+	p, _ := New(cfg, models.DefaultRegistry())
+
+	// Set very short poll interval and low max attempts for test
+	originalPollInterval := defaultPollInterval
+	originalMaxAttempts := maxPollAttempts
+	defaultPollInterval = 1 * time.Millisecond
+	maxPollAttempts = 3
+	defer func() {
+		defaultPollInterval = originalPollInterval
+		maxPollAttempts = originalMaxAttempts
+	}()
+
+	req := &models.VideoRequest{Model: "sora-2", Prompt: "test"}
+
+	_, err := p.GenerateVideo(context.Background(), req)
+	if err == nil {
+		t.Fatal("GenerateVideo() expected error for poll timeout")
+	}
+	if !strings.Contains(err.Error(), "exceeded maximum poll attempts") {
+		t.Errorf("GenerateVideo() error = %v, want timeout error", err)
+	}
+}
+
+func TestProvider_GenerateVideo_GetStatusInvalidJSON(t *testing.T) {
+	requestCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/videos"):
+			resp := videoJobResponse{ID: "video_badjson", Status: "queued"}
+			json.NewEncoder(w).Encode(resp)
+
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/videos/video_badjson"):
+			requestCount++
+			w.Write([]byte("invalid json"))
+		}
+	}))
+	defer server.Close()
+
+	cfg := &provider.Config{APIKey: "test-key", BaseURL: server.URL}
+	p, _ := New(cfg, models.DefaultRegistry())
+
+	originalPollInterval := defaultPollInterval
+	defaultPollInterval = 10 * time.Millisecond
+	defer func() { defaultPollInterval = originalPollInterval }()
+
+	req := &models.VideoRequest{Model: "sora-2", Prompt: "test"}
+
+	_, err := p.GenerateVideo(context.Background(), req)
+	if err == nil {
+		t.Fatal("GenerateVideo() expected error for invalid JSON in status")
+	}
+	if !strings.Contains(err.Error(), "failed to parse response") {
+		t.Errorf("GenerateVideo() error = %v, want parse error", err)
+	}
+}
+
+func TestProvider_GenerateVideo_NoDuration(t *testing.T) {
+	requestCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/videos"):
+			// Verify seconds is NOT passed when duration is 0
+			if err := r.ParseMultipartForm(32 << 20); err != nil {
+				t.Errorf("Failed to parse multipart form: %v", err)
+			}
+			if r.FormValue("seconds") != "" {
+				t.Errorf("Expected no seconds field, got %s", r.FormValue("seconds"))
+			}
+
+			resp := videoJobResponse{ID: "video_nodur", Status: "queued"}
+			json.NewEncoder(w).Encode(resp)
+
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/videos/video_nodur") && !strings.HasSuffix(r.URL.Path, "/content"):
+			requestCount++
+			resp := videoJobResponse{ID: "video_nodur", Status: "completed"}
+			json.NewEncoder(w).Encode(resp)
+
+		case strings.HasSuffix(r.URL.Path, "/content"):
+			w.Write([]byte("video"))
+		}
+	}))
+	defer server.Close()
+
+	cfg := &provider.Config{APIKey: "test-key", BaseURL: server.URL}
+	p, _ := New(cfg, models.DefaultRegistry())
+
+	originalPollInterval := defaultPollInterval
+	defaultPollInterval = 10 * time.Millisecond
+	defer func() { defaultPollInterval = originalPollInterval }()
+
+	req := &models.VideoRequest{
+		Model:    "sora-2",
+		Prompt:   "test",
+		Duration: 0, // No duration specified
+	}
+
+	_, err := p.GenerateVideo(context.Background(), req)
+	if err != nil {
+		t.Fatalf("GenerateVideo() without duration error = %v", err)
+	}
+}

@@ -661,3 +661,44 @@ func TestSaver_SaveVideo_CreatesDirectory(t *testing.T) {
 		t.Error("SaveVideo() did not create nested directory")
 	}
 }
+
+func TestSaver_SaveVideo_DownloadFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	s := NewSaver()
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "should-not-exist.mp4")
+
+	video := &models.GeneratedVideo{
+		URL: server.URL,
+	}
+
+	err := s.SaveVideo(context.Background(), video, path)
+	if err == nil {
+		t.Fatal("SaveVideo() expected error for download failure")
+	}
+	if !strings.Contains(err.Error(), "failed to download video") {
+		t.Errorf("SaveVideo() error = %v, want download error", err)
+	}
+}
+
+func TestSaver_SaveVideo_WriteFailure(t *testing.T) {
+	s := NewSaver()
+	// Use an invalid path that cannot be written to
+	path := "/nonexistent/readonly/path/video.mp4"
+
+	video := &models.GeneratedVideo{
+		Data: []byte("video data"),
+	}
+
+	err := s.SaveVideo(context.Background(), video, path)
+	if err == nil {
+		t.Fatal("SaveVideo() expected error for write failure")
+	}
+	if !strings.Contains(err.Error(), "failed to") {
+		t.Errorf("SaveVideo() error = %v, want write/directory error", err)
+	}
+}

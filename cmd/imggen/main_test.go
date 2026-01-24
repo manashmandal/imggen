@@ -1920,3 +1920,93 @@ func TestRootCmd_HasVideoSubcommand(t *testing.T) {
 		t.Error("root command should have 'video' subcommand")
 	}
 }
+
+func TestRunVideo_ProviderNotSupportingVideo(t *testing.T) {
+	resetFlags()
+	out := &bytes.Buffer{}
+
+	// Use base mockProvider which doesn't implement VideoProvider
+	app := &App{
+		Out:      out,
+		Err:      out,
+		Registry: models.DefaultRegistry(),
+		GetEnv:   func(key string) string { return "" },
+		NewProvider: func(cfg *provider.Config, registry *models.ModelRegistry) (provider.Provider, error) {
+			return &mockProvider{}, nil // Not a VideoProvider
+		},
+		NewSaver:     image.NewSaver,
+		NewDisplayer: display.New,
+	}
+
+	flagVideoModel = "sora-2"
+	flagAPIKey = "test-key"
+
+	cmd := &cobra.Command{}
+	err := runVideo(cmd, []string{"test prompt"}, app)
+
+	if err == nil {
+		t.Error("runVideo() error = nil, want error for provider not supporting video")
+	}
+	if !strings.Contains(err.Error(), "does not support video") {
+		t.Errorf("error = %v, want error about video support", err)
+	}
+}
+
+func TestRunVideo_SaveError(t *testing.T) {
+	resetFlags()
+	out := &bytes.Buffer{}
+
+	mockProv := &mockVideoProvider{
+		generateVideoFunc: func(ctx context.Context, req *models.VideoRequest) (*models.VideoResponse, error) {
+			return &models.VideoResponse{
+				Videos: []models.GeneratedVideo{{Data: []byte("video data")}},
+				Cost:   &models.CostInfo{Total: 0.40, PerImage: 0.10, Currency: "USD"},
+			}, nil
+		},
+	}
+	app := newTestAppWithVideoProvider(out, mockProv)
+
+	flagVideoModel = "sora-2"
+	flagVideoOutput = "/nonexistent/directory/video.mp4" // Invalid path
+	flagAPIKey = "test-key"
+
+	cmd := &cobra.Command{}
+	err := runVideo(cmd, []string{"test prompt"}, app)
+
+	if err == nil {
+		t.Error("runVideo() error = nil, want error for save failure")
+	}
+	if !strings.Contains(err.Error(), "failed to save video") {
+		t.Errorf("error = %v, want save error", err)
+	}
+}
+
+func TestRunVideo_ProviderCreationError(t *testing.T) {
+	resetFlags()
+	out := &bytes.Buffer{}
+
+	app := &App{
+		Out:      out,
+		Err:      out,
+		Registry: models.DefaultRegistry(),
+		GetEnv:   func(key string) string { return "" },
+		NewProvider: func(cfg *provider.Config, registry *models.ModelRegistry) (provider.Provider, error) {
+			return nil, errors.New("provider creation failed")
+		},
+		NewSaver:     image.NewSaver,
+		NewDisplayer: display.New,
+	}
+
+	flagVideoModel = "sora-2"
+	flagAPIKey = "test-key"
+
+	cmd := &cobra.Command{}
+	err := runVideo(cmd, []string{"test prompt"}, app)
+
+	if err == nil {
+		t.Error("runVideo() error = nil, want error for provider creation failure")
+	}
+	if !strings.Contains(err.Error(), "failed to create provider") {
+		t.Errorf("error = %v, want provider creation error", err)
+	}
+}
