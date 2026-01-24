@@ -4,9 +4,17 @@
 
 <h1 align="center">imggen</h1>
 
-<p align="center">CLI tool for generating images and extracting text (OCR) using AI APIs.</p>
+<p align="center">CLI tool for generating images, videos, and extracting text (OCR) using AI APIs.</p>
 
 > **Note:** Currently only OpenAI is supported. Other providers (Stability AI, etc.) are work in progress.
+
+**Features:**
+- Image generation (DALL-E 2, DALL-E 3, GPT-Image-1)
+- Video generation (Sora)
+- OCR with structured output
+- Batch processing
+- Cost tracking
+- AI CLI integrations
 
 ## Sample Generated Images
 
@@ -56,6 +64,37 @@ imggen -S "a cute cat"
 # Interactive mode for iterative editing
 imggen -i
 ```
+
+## Video Generation
+
+Generate videos using OpenAI's Sora API:
+
+```bash
+# Basic video generation
+imggen video "a cat walking on a beach"
+
+# With options
+imggen video -m sora-2-pro -d 8 "sunset over mountains"
+imggen video -s 1280x720 -o myvideo.mp4 "dancing robot"
+```
+
+### Video Models
+
+| Model | Duration | Sizes | Cost |
+|-------|----------|-------|------|
+| sora-2 (default) | 4, 8, 12 sec | 720x1280, 1280x720, 1024x1792, 1792x1024 | $0.10/sec |
+| sora-2-pro | 4, 8, 12, 16, 20 sec | Above + 1080x1920, 1920x1080 | $0.30/sec |
+
+### Video Flags
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--model` | `-m` | Model (sora-2, sora-2-pro) | sora-2 |
+| `--duration` | `-d` | Duration in seconds | 4 |
+| `--size` | `-s` | Video size (e.g., 1280x720) | 720x1280 |
+| `--output` | `-o` | Output filename | auto-generated |
+| `--api-key` | | API key | OPENAI_API_KEY |
+| `--verbose` | `-v` | Log HTTP requests | false |
 
 ## Interactive Mode
 
