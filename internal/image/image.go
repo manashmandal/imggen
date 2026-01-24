@@ -124,3 +124,40 @@ func GenerateFilenameWithTime(index int, format models.OutputFormat, t time.Time
 	}
 	return fmt.Sprintf("image-%s.%s", timestamp, format)
 }
+
+// SaveVideo saves a generated video to disk
+func (s *Saver) SaveVideo(ctx context.Context, video *models.GeneratedVideo, path string) error {
+	var data []byte
+	var err error
+
+	if len(video.Data) > 0 {
+		data = video.Data
+	} else if video.URL != "" {
+		data, err = s.downloadFromURL(ctx, video.URL)
+		if err != nil {
+			return fmt.Errorf("failed to download video: %w", err)
+		}
+	} else {
+		return fmt.Errorf("no video data available")
+	}
+
+	if err := s.ensureDir(path); err != nil {
+		return fmt.Errorf("failed to create directory: %w", err)
+	}
+
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		return fmt.Errorf("failed to write file: %w", err)
+	}
+
+	video.Filename = path
+	return nil
+}
+
+// GenerateVideoFilename generates a filename for video output
+func GenerateVideoFilename(index int) string {
+	timestamp := time.Now().Format("20060102-150405")
+	if index > 0 {
+		return fmt.Sprintf("video-%s-%d.mp4", timestamp, index+1)
+	}
+	return fmt.Sprintf("video-%s.mp4", timestamp)
+}
