@@ -12,6 +12,8 @@
 
 This document proposes **Workflow Pipelines** as a killer feature for imggen - the ability to define, save, and execute multi-step image generation workflows directly from the command line. This feature addresses the critical 2026 market trend toward agentic, multi-step AI workflows while filling a significant gap in the developer tooling space: no CLI tool currently offers declarative, composable image generation pipelines with built-in style and character consistency.
 
+**Key Innovation: Agentic Workflow Generation** - Users can generate complete workflows from natural language descriptions using built-in AI agents. Instead of manually writing YAML, simply describe what you need: `imggen workflow generate "Create brand assets for my startup"`. The AI generates production-ready workflows with proper consistency references, cost optimization, and best practices baked in.
+
 ---
 
 ## Table of Contents
@@ -20,6 +22,7 @@ This document proposes **Workflow Pipelines** as a killer feature for imggen - t
 2. [Market Analysis and Competitive Landscape](#2-market-analysis-and-competitive-landscape)
 3. [User Personas and Use Cases](#3-user-personas-and-use-cases)
 4. [Detailed Feature Requirements](#4-detailed-feature-requirements)
+   - [4.7 Agentic Workflow Generation](#47-agentic-workflow-generation) *(NEW)*
 5. [Success Metrics and KPIs](#5-success-metrics-and-kpis)
 6. [Risks and Mitigations](#6-risks-and-mitigations)
 
@@ -722,7 +725,292 @@ Execute Steps:
 Generate Report
 ```
 
-### 4.7 Future Considerations (Out of Scope for v1.0)
+### 4.7 Agentic Workflow Generation
+
+A key differentiator for imggen workflows is **built-in AI-powered workflow generation**. Users can describe their goals in natural language, and the tool generates complete, production-ready workflow YAML.
+
+#### 4.7.1 Core Concept
+
+Instead of manually writing YAML, users can leverage AI agents to:
+
+1. **Generate workflows from descriptions** - Describe what you want, get a working workflow
+2. **Refine existing workflows** - Ask AI to modify, optimize, or extend workflows
+3. **Debug and fix issues** - AI analyzes errors and suggests fixes
+4. **Learn best practices** - AI explains generated workflows and suggests improvements
+
+#### 4.7.2 CLI Commands
+
+```bash
+# Generate a workflow from natural language
+imggen workflow generate "Create a brand asset suite with logo, social media images, and hero banner for a fintech startup called PayFlow"
+
+# Interactive workflow building with AI guidance
+imggen workflow generate --interactive
+
+# Generate with specific constraints
+imggen workflow generate "Product photography for e-commerce" \
+  --model gpt-image-1 \
+  --max-steps 10 \
+  --cost-limit 2.00
+
+# Refine an existing workflow
+imggen workflow refine brand-assets.yaml "Add Instagram story variants and a video teaser"
+
+# Explain what a workflow does
+imggen workflow explain complex-workflow.yaml
+
+# Fix errors in a workflow
+imggen workflow fix broken-workflow.yaml
+
+# Suggest optimizations
+imggen workflow optimize slow-workflow.yaml
+```
+
+#### 4.7.3 Example: Natural Language to Workflow
+
+**User Input:**
+```bash
+imggen workflow generate "I need consistent character art for my RPG game.
+The character is a cyberpunk hacker named Zero - female, neon green hair,
+AR glasses, black hoodie. I need a reference sheet, 4 expression portraits,
+and 3 action poses. Output should be transparent PNGs for game engine."
+```
+
+**Generated Output (saved to `zero-character.yaml`):**
+```yaml
+name: zero-character-sheet
+description: Cyberpunk hacker character "Zero" - reference, portraits, and poses
+version: 1.0
+
+variables:
+  character_name: "Zero"
+  character_description: |
+    Female cyberpunk hacker, neon green hair styled in an undercut,
+    AR glasses with holographic display, black hoodie with tech patterns,
+    confident and skilled demeanor
+  art_style: "cyberpunk game art, cel-shaded, neon accents, high contrast"
+
+settings:
+  output_dir: ./characters/zero
+  parallel: 2
+
+steps:
+  - id: reference-sheet
+    action: generate
+    model: gpt-image-1
+    prompt: |
+      Character reference sheet for ${character_name}.
+      ${character_description}
+      Style: ${art_style}
+      Front-facing view, full design details visible.
+      Transparent background for game asset use.
+    size: 1024x1024
+    quality: hd
+    transparent: true
+    output: reference/zero-main.png
+
+  # ... AI generates all 8 steps with proper references
+```
+
+#### 4.7.4 Interactive Mode
+
+The `--interactive` flag enables a conversational workflow builder:
+
+```
+$ imggen workflow generate --interactive
+
+🤖 What kind of assets do you want to create?
+> Marketing materials for a mobile app launch
+
+🤖 What's the app name and what does it do?
+> FitTrack - a fitness tracking app with social features
+
+🤖 What's the visual style you're going for?
+> Modern, energetic, bright gradients, health/fitness vibe
+
+🤖 Which assets do you need? (select all that apply)
+  [x] App Store screenshots
+  [x] Social media posts
+  [x] Hero banner for website
+  [ ] Video trailer
+  [x] Press kit images
+
+🤖 Any specific color preferences?
+> Coral and teal gradient, white backgrounds
+
+📝 Generating workflow...
+
+✅ Created: fittrack-launch-assets.yaml
+   - 12 steps
+   - Estimated cost: $1.80
+   - Estimated time: 4 minutes
+
+Would you like me to:
+  [1] Run the workflow now
+  [2] Open for editing
+  [3] Explain the workflow
+  [4] Add more assets
+> 1
+```
+
+#### 4.7.5 AI Agent Integration
+
+imggen already integrates with AI CLI tools (Claude, Codex, Cursor, Gemini). The workflow generation feature leverages these integrations:
+
+```bash
+# Use specific AI provider for generation
+imggen workflow generate --agent claude "..."
+imggen workflow generate --agent codex "..."
+
+# Use local/custom AI endpoint
+imggen workflow generate --agent-url http://localhost:11434/api "..."
+```
+
+**AI Agent Capabilities:**
+
+| Capability | Description |
+|------------|-------------|
+| **Context Awareness** | Agent reads existing workflows, styles, and templates to maintain consistency |
+| **Cost Optimization** | Agent suggests efficient model choices and parallel execution strategies |
+| **Best Practice Injection** | Auto-applies consistency references, proper sizing, and output organization |
+| **Error Prevention** | Validates generated YAML and warns about potential issues |
+| **Learning from Usage** | Agent improves suggestions based on user's workflow history |
+
+#### 4.7.6 Workflow Refinement
+
+Beyond generation, AI agents can modify existing workflows:
+
+```bash
+# Add new steps to existing workflow
+imggen workflow refine campaign.yaml "Add dark mode variants for all images"
+
+# Optimize for cost
+imggen workflow refine campaign.yaml --optimize cost
+# Output: "Reduced estimated cost from $3.20 to $1.85 by:
+#          - Consolidating similar prompts
+#          - Using smaller sizes where appropriate
+#          - Enabling parallel execution"
+
+# Optimize for quality
+imggen workflow refine campaign.yaml --optimize quality
+# Output: "Enhanced quality settings:
+#          - Upgraded to HD quality for hero images
+#          - Added reference chains for better consistency
+#          - Increased output resolution for print assets"
+
+# Convert between formats
+imggen workflow refine campaign.json --format yaml > campaign.yaml
+```
+
+#### 4.7.7 Workflow Explanation
+
+AI can explain complex workflows in plain language:
+
+```bash
+$ imggen workflow explain brand-suite.yaml
+
+📋 Workflow: brand-suite (v1.0)
+
+This workflow generates a complete brand asset suite for "${brand_name}".
+
+📊 Overview:
+  - 8 total steps
+  - 3 parallel execution groups
+  - Uses gpt-image-1 for all generation
+  - Estimated cost: $1.20-$1.60
+
+🔄 Execution Flow:
+
+  Step 1: logo-primary
+  └─ Generates the main logo with brand colors and style
+
+  Step 2-3: (parallel)
+  ├─ logo-icon: Creates app icon variant (references logo-primary)
+  └─ hero-image: Creates website hero banner
+
+  Step 4-6: (parallel)
+  ├─ social-facebook: Facebook cover (references hero-image)
+  ├─ social-twitter: Twitter header (references hero-image)
+  └─ social-linkedin: LinkedIn banner (references hero-image)
+
+  ...
+
+💡 Consistency Strategy:
+  The workflow uses ${logo-primary.output} and ${hero-image.output}
+  as references to maintain visual consistency across all assets.
+```
+
+#### 4.7.8 Technical Implementation
+
+```
+internal/
+  agentic/
+    generator.go       # Natural language to workflow conversion
+    refiner.go         # Workflow modification and optimization
+    explainer.go       # Workflow explanation generation
+    interactive.go     # Interactive builder session management
+
+  agents/
+    claude.go          # Claude API integration
+    codex.go           # OpenAI Codex integration
+    gemini.go          # Gemini integration
+    local.go           # Local LLM support (Ollama, etc.)
+
+  prompts/
+    generation.go      # System prompts for workflow generation
+    refinement.go      # System prompts for modifications
+    templates/         # Few-shot examples for better generation
+```
+
+**Generation Pipeline:**
+
+```
+User Description
+       |
+       v
+Context Gathering
+  - Existing workflows
+  - Style profiles
+  - User preferences
+  - Available models
+       |
+       v
+AI Agent Processing
+  - Parse intent
+  - Determine steps needed
+  - Plan consistency strategy
+  - Generate YAML structure
+       |
+       v
+Validation & Enhancement
+  - Schema validation
+  - Cost estimation
+  - Parallel optimization
+  - Reference chain verification
+       |
+       v
+Output Workflow File
+```
+
+#### 4.7.9 Safety and Guardrails
+
+AI-generated workflows include safety measures:
+
+- **Cost limits enforced** - Generated workflows respect user's default cost limit
+- **Model validation** - Only uses models available to the user
+- **Prompt sanitization** - Prevents injection of harmful content
+- **Human review option** - `--review` flag pauses before saving for user approval
+- **Diff mode** - `--diff` shows changes when refining existing workflows
+
+```bash
+# Always review before saving
+imggen workflow generate --review "..."
+
+# Show diff when refining
+imggen workflow refine campaign.yaml --diff "Add video step"
+```
+
+### 4.8 Future Considerations (Out of Scope for v1.0)
 
 - Workflow marketplace/sharing platform
 - Visual workflow editor (web-based)
@@ -732,6 +1020,8 @@ Generate Report
 - Workflow versioning and rollback
 - Team collaboration features
 - Integration with design tools (Figma, Sketch)
+- Voice-to-workflow generation
+- Workflow version control with git-like semantics
 
 ---
 
