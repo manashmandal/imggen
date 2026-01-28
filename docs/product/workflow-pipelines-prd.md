@@ -1,0 +1,1395 @@
+# Product Requirements Document: Workflow Pipelines
+
+**Feature Name:** Workflow Pipelines (imggen workflows)
+**Version:** 1.0
+**Date:** January 28, 2026
+**Author:** Product Management
+**Status:** Proposal
+
+---
+
+## Executive Summary
+
+This document proposes **Workflow Pipelines** as a killer feature for imggen - the ability to define, save, and execute multi-step image generation workflows directly from the command line. This feature addresses the critical 2026 market trend toward agentic, multi-step AI workflows while filling a significant gap in the developer tooling space: no CLI tool currently offers declarative, composable image generation pipelines with built-in style and character consistency.
+
+**Key Innovation: Agentic Workflow Generation** - Users can generate complete workflows from natural language descriptions using built-in AI agents. Instead of manually writing YAML, simply describe what you need: `imggen workflow generate "Create brand assets for my startup"`. The AI generates production-ready workflows with proper consistency references, cost optimization, and best practices baked in.
+
+---
+
+## Table of Contents
+
+1. [Feature Overview and Value Proposition](#1-feature-overview-and-value-proposition)
+2. [Market Analysis and Competitive Landscape](#2-market-analysis-and-competitive-landscape)
+3. [User Personas and Use Cases](#3-user-personas-and-use-cases)
+4. [Detailed Feature Requirements](#4-detailed-feature-requirements)
+   - [4.7 Agentic Workflow Generation](#47-agentic-workflow-generation) *(NEW)*
+5. [Success Metrics and KPIs](#5-success-metrics-and-kpis)
+6. [Risks and Mitigations](#6-risks-and-mitigations)
+
+---
+
+## 1. Feature Overview and Value Proposition
+
+### 1.1 Feature Overview
+
+Workflow Pipelines enables users to define multi-step image generation workflows as declarative YAML or JSON configuration files. These workflows can:
+
+- Chain multiple generation and editing steps together
+- Maintain character and style consistency across outputs
+- Reference outputs from previous steps as inputs to subsequent steps
+- Apply conditional logic based on generation results
+- Execute in parallel where dependencies allow
+- Be version-controlled, shared, and composed into larger workflows
+
+**Example workflow:**
+```yaml
+name: brand-asset-suite
+description: Generate consistent brand assets for a product launch
+version: 1.0
+
+variables:
+  product_name: "CloudSync Pro"
+  brand_color: "electric blue"
+  style: "modern minimalist tech aesthetic"
+
+steps:
+  - id: hero-image
+    action: generate
+    model: gpt-image-1
+    prompt: |
+      Product hero image for ${product_name}. ${style}.
+      Clean white background, ${brand_color} accent lighting.
+    size: 1792x1024
+    quality: hd
+    output: hero.png
+
+  - id: social-square
+    action: generate
+    model: gpt-image-1
+    prompt: |
+      Social media square image for ${product_name}. ${style}.
+      Same visual identity as hero image.
+    size: 1024x1024
+    reference: ${hero-image.output}  # Maintains consistency
+    output: social-square.png
+
+  - id: icon-variants
+    action: generate
+    model: gpt-image-1
+    prompt: "App icon for ${product_name}. ${style}. ${brand_color}."
+    size: 1024x1024
+    count: 3
+    transparent: true
+    output: icons/icon-{index}.png
+
+  - id: thumbnail
+    action: edit
+    input: ${hero-image.output}
+    prompt: "Crop and optimize for video thumbnail"
+    size: 1280x720
+    output: thumbnail.png
+```
+
+**CLI Usage:**
+```bash
+# Execute a workflow
+imggen workflow run brand-assets.yaml
+
+# Execute with variable overrides
+imggen workflow run brand-assets.yaml --var product_name="DataVault" --var brand_color="deep purple"
+
+# Dry run to preview steps
+imggen workflow run brand-assets.yaml --dry-run
+
+# List available workflows
+imggen workflow list
+
+# Validate workflow syntax
+imggen workflow validate brand-assets.yaml
+
+# Create workflow from template
+imggen workflow init --template brand-suite
+```
+
+### 1.2 Value Proposition
+
+**For Developers and DevOps Teams:**
+- Treat image generation as infrastructure-as-code
+- Version control creative assets alongside application code
+- Integrate into CI/CD pipelines for automated asset generation
+- Reproduce exact outputs with deterministic configurations
+
+**For Creative Technologists:**
+- Bridge the gap between visual tools (ComfyUI) and programmatic workflows
+- Create reusable, parameterized asset generation recipes
+- Maintain brand consistency through code, not manual processes
+- Scale creative production without proportional effort increase
+
+**For Teams and Agencies:**
+- Share standardized workflows across team members
+- Ensure brand guideline compliance automatically
+- Reduce production time from hours to minutes
+- Generate localized variants with variable substitution
+
+### 1.3 Strategic Alignment
+
+This feature aligns with three major 2026 market trends:
+
+1. **Agentic AI Workflows:** The shift from single-prompt generation to multi-step, goal-driven pipelines
+2. **Character/Style Consistency:** The breakthrough capability that transforms AI from novelty to production tool
+3. **Developer-First Tooling:** The growing demand for CLI and API-first solutions that integrate into existing workflows
+
+---
+
+## 2. Market Analysis and Competitive Landscape
+
+### 2.1 Market Context
+
+The AI image generation market is undergoing a fundamental transformation in 2025-2026:
+
+- **90% of digital content predicted to be AI-generated by 2026** (Gartner)
+- **Character consistency** has emerged as the most valuable differentiator
+- **Agentic AI systems** are shifting from assistive tools to autonomous workflow operators
+- **Enterprise adoption** driving demand for governance, consistency, and automation
+
+Key insight: *"Early tools focused purely on converting text prompts into images. In 2026, this is the baseline, not the differentiator. Modern AI image generators are judged on how well they can modify existing images and maintain consistency across multiple outputs."*
+
+### 2.2 Competitive Landscape
+
+| Tool | Type | Workflows | Consistency | CLI | Composable |
+|------|------|-----------|-------------|-----|------------|
+| **imggen (current)** | CLI | No | No | Yes | No |
+| **ComfyUI** | Desktop/GUI | Yes (visual) | Yes | No | Limited |
+| **Midjourney** | Chat/Web | No | Limited | No | No |
+| **Leonardo.AI** | Web/API | No | Yes | No | No |
+| **Replicate** | API | No | Via models | No | Via code |
+| **Stability CLI** | CLI | No | No | Yes | No |
+| **OpenAI API** | API | No | Via prompts | No | Via code |
+| **imggen (proposed)** | CLI | **Yes** | **Yes** | **Yes** | **Yes** |
+
+### 2.3 Competitive Gap Analysis
+
+**ComfyUI:** The closest competitor with workflow capabilities
+- Strengths: Visual node-based workflows, extensive customization
+- Weaknesses: GUI-only (no CLI), requires local GPU, not version-controllable
+- Gap: No declarative, text-based workflow definition
+
+**Replicate/API Providers:** Powerful but raw
+- Strengths: Multiple models, high throughput, good documentation
+- Weaknesses: Requires custom code for workflows, no built-in consistency
+- Gap: No workflow orchestration layer
+
+**Other CLI Tools:** Single-shot generation only
+- Strengths: Simple, fast for one-off tasks
+- Weaknesses: No chaining, no consistency, no automation
+- Gap: No multi-step pipeline support
+
+### 2.4 Market Opportunity
+
+imggen can occupy a unique position: **the only CLI tool offering declarative workflow pipelines with built-in style/character consistency**. This positions the tool as:
+
+- The "ComfyUI for the terminal"
+- Infrastructure-as-code for creative assets
+- The bridge between developer workflows and AI generation
+
+Target market segments:
+1. **Developer tools companies** needing automated asset generation
+2. **Creative agencies** with technical teams
+3. **Game developers** generating consistent character art
+4. **Marketing teams** with DevOps-oriented workflows
+5. **Individual developers** building AI-powered applications
+
+---
+
+## 3. User Personas and Use Cases
+
+### 3.1 User Personas
+
+#### Persona 1: Alex - Senior DevOps Engineer
+**Background:** Works at a SaaS company, manages CI/CD pipelines, advocates for infrastructure-as-code
+
+**Goals:**
+- Automate marketing asset generation for releases
+- Version control all creative assets
+- Integrate image generation into existing GitHub Actions workflows
+
+**Pain Points:**
+- Current process requires manual handoff to design team
+- Inconsistent branding across auto-generated assets
+- No reproducibility in creative outputs
+
+**Quote:** *"I want to treat image generation like any other build artifact - defined in code, version controlled, and automatically generated."*
+
+#### Persona 2: Maya - Creative Technologist
+**Background:** Agency creative director with coding skills, bridges design and development teams
+
+**Goals:**
+- Create reusable templates for client brand assets
+- Maintain character consistency across campaign materials
+- Scale creative production without hiring more designers
+
+**Pain Points:**
+- ComfyUI workflows are not portable or version-controllable
+- Each client requires manual setup of generation parameters
+- Consistency across outputs requires extensive manual editing
+
+**Quote:** *"I need something between pure code and visual tools - something I can template, version, and reuse across clients."*
+
+#### Persona 3: Jordan - Indie Game Developer
+**Background:** Solo developer building a narrative-driven game, handles all aspects including art
+
+**Goals:**
+- Generate consistent character portraits across the game
+- Create sprite variations programmatically
+- Iterate quickly on visual style without redoing everything
+
+**Pain Points:**
+- AI tools generate inconsistent characters between sessions
+- Manual editing to maintain consistency is time-prohibitive
+- Cannot afford traditional art production pipeline
+
+**Quote:** *"I need my protagonist to look the same in every scene. Current tools make this nearly impossible without extensive manual work."*
+
+#### Persona 4: Sam - Technical Marketing Manager
+**Background:** Marketing role with technical background, manages automated campaigns
+
+**Goals:**
+- Generate localized ad variations automatically
+- Ensure brand compliance in all generated assets
+- Integrate with existing marketing automation tools
+
+**Pain Points:**
+- Design team is a bottleneck for campaign variations
+- Brand inconsistency in AI-generated content
+- Manual QA process for each generated asset
+
+**Quote:** *"We need 50 variations of the same ad for different markets. The design team can't keep up, and AI tools don't maintain our brand."*
+
+### 3.2 Use Cases
+
+#### Use Case 1: Brand Asset Suite Generation
+
+**Scenario:** A startup needs consistent brand assets for their product launch - hero images, social media variants, app icons, and presentation graphics.
+
+**Workflow:**
+1. Define brand parameters (colors, style, product name) as variables
+2. Generate hero image with brand specifications
+3. Generate social variants referencing hero image for consistency
+4. Generate icon variants with transparent backgrounds
+5. Generate presentation slides with consistent styling
+
+**Value Delivered:**
+- 10+ assets generated in minutes vs. hours of design work
+- Perfect brand consistency across all outputs
+- Repeatable for future launches with variable changes
+
+#### Use Case 2: Game Character Sheet Generation
+
+**Scenario:** A game developer needs consistent character portraits showing the same character in different poses, expressions, and situations.
+
+**Workflow:**
+1. Generate base character design with detailed specifications
+2. Generate front/side/back views referencing base design
+3. Generate expression variants (happy, sad, angry, surprised)
+4. Generate action poses (running, fighting, idle)
+5. Export as sprite sheet with consistent sizing
+
+**Value Delivered:**
+- Character consistency across 20+ images
+- Reproducible pipeline for additional characters
+- Export-ready format for game engine
+
+#### Use Case 3: CI/CD Asset Pipeline
+
+**Scenario:** A DevOps team wants to automatically generate documentation screenshots and marketing assets on each release.
+
+**Workflow:**
+1. Trigger workflow on release tag
+2. Read release notes for feature descriptions
+3. Generate feature highlight images for each new feature
+4. Generate social announcement graphics
+5. Commit generated assets to repository
+6. Trigger marketing automation
+
+**Value Delivered:**
+- Zero manual intervention for release assets
+- Consistent quality across all releases
+- Integrated into existing DevOps toolchain
+
+#### Use Case 4: Localized Marketing Campaign
+
+**Scenario:** A marketing team needs the same campaign creative adapted for 10 different regional markets with localized text and cultural adaptations.
+
+**Workflow:**
+1. Define base campaign creative as template
+2. Load localization variables from CSV/JSON
+3. Generate regional variants with localized text
+4. Apply regional style adjustments (colors, imagery)
+5. Export organized by region for distribution
+
+**Value Delivered:**
+- 10 market variants generated from single template
+- Consistent brand identity across regions
+- Scalable to additional markets without redesign
+
+---
+
+## 4. Detailed Feature Requirements
+
+### 4.1 Workflow Definition Schema
+
+#### 4.1.1 Workflow File Structure
+
+```yaml
+# workflow.yaml
+name: string                    # Required: Workflow identifier
+description: string             # Optional: Human-readable description
+version: string                 # Optional: Semantic version
+author: string                  # Optional: Creator attribution
+
+variables:                      # Optional: Parameterized inputs
+  var_name: default_value
+  var_name2:
+    default: value
+    description: "Description for --help"
+    required: true
+
+settings:                       # Optional: Global workflow settings
+  output_dir: ./output          # Base output directory
+  parallel: 3                   # Max parallel steps
+  continue_on_error: false      # Stop on first error
+  cost_limit: 5.00             # Maximum spend in USD
+
+steps:                          # Required: Ordered list of steps
+  - id: step_id                 # Required: Unique step identifier
+    action: generate|edit|ocr|video|condition|transform
+    # ... action-specific fields
+```
+
+#### 4.1.2 Step Types
+
+**Generate Step:**
+```yaml
+- id: hero-image
+  action: generate
+  model: gpt-image-1           # Optional: Override default
+  prompt: "..."                # Required: Generation prompt
+  size: 1792x1024             # Optional: Image dimensions
+  quality: hd                  # Optional: Quality level
+  count: 1                     # Optional: Number of outputs
+  format: png                  # Optional: Output format
+  transparent: false           # Optional: Transparency
+  style: vivid                 # Optional: Style (DALL-E 3)
+  reference: ${step.output}    # Optional: Reference for consistency
+  output: filename.png         # Required: Output path
+  depends_on: [step_id]        # Optional: Explicit dependencies
+```
+
+**Edit Step:**
+```yaml
+- id: cropped-hero
+  action: edit
+  input: ${hero-image.output}  # Required: Source image
+  mask: mask.png               # Optional: Edit mask
+  prompt: "..."                # Required: Edit instruction
+  model: gpt-image-1
+  size: 1024x1024
+  output: cropped.png
+```
+
+**OCR Step:**
+```yaml
+- id: extract-text
+  action: ocr
+  input: document.png          # Required: Source image
+  model: gpt-5-mini
+  schema: schema.json          # Optional: Structured output
+  output: extracted.json
+```
+
+**Video Step:**
+```yaml
+- id: product-video
+  action: video
+  prompt: "..."
+  model: sora-2
+  duration: 8
+  size: 1280x720
+  output: product.mp4
+```
+
+**Condition Step:**
+```yaml
+- id: quality-check
+  action: condition
+  if: ${hero-image.cost} > 0.10
+  then:
+    - id: compress
+      action: transform
+      # ...
+  else:
+    - id: upscale
+      action: transform
+      # ...
+```
+
+**Transform Step:**
+```yaml
+- id: resize-for-social
+  action: transform
+  input: ${hero-image.output}
+  operations:
+    - resize: 1080x1080
+    - format: jpeg
+    - quality: 85
+  output: social.jpg
+```
+
+#### 4.1.3 Variable System
+
+Variables support:
+- Default values
+- Environment variable references: `${env:VAR_NAME}`
+- Step output references: `${step_id.output}`, `${step_id.cost}`
+- File references: `${file:path/to/file.txt}`
+- Built-in variables: `${workflow.name}`, `${timestamp}`, `${index}`
+
+```yaml
+variables:
+  brand_name: "MyBrand"
+  api_key: ${env:OPENAI_API_KEY}
+  style_guide: ${file:brand/style.txt}
+
+steps:
+  - id: logo
+    prompt: "Logo for ${brand_name} following: ${style_guide}"
+```
+
+### 4.2 CLI Commands
+
+#### 4.2.1 Workflow Execution
+
+```bash
+# Run a workflow
+imggen workflow run <workflow-file> [flags]
+
+Flags:
+  -v, --var key=value    Override workflow variable (repeatable)
+  -o, --output-dir       Override output directory
+  -p, --parallel         Override parallelism setting
+      --dry-run          Preview steps without executing
+      --resume           Resume from last failed step
+      --step             Execute specific step(s) only
+      --skip             Skip specific step(s)
+      --verbose          Show detailed progress
+      --cost-limit       Override cost limit
+```
+
+#### 4.2.2 Workflow Management
+
+```bash
+# List workflows
+imggen workflow list [flags]
+  --global    List global templates
+  --local     List project workflows
+
+# Validate workflow
+imggen workflow validate <workflow-file>
+
+# Initialize from template
+imggen workflow init [flags]
+  --template  Use built-in template
+  --name      Workflow name
+  --output    Output file path
+
+# Show workflow info
+imggen workflow info <workflow-file>
+  Shows: steps, variables, dependencies, estimated cost
+
+# Export workflow
+imggen workflow export <workflow-file> [flags]
+  --format    json|yaml
+  --include-outputs  Include generated outputs
+```
+
+#### 4.2.3 Built-in Templates
+
+```bash
+imggen workflow init --template <name>
+
+Templates:
+  brand-suite      # Logo, social media, hero images
+  game-character   # Character sheet with consistency
+  product-shots    # E-commerce product photography
+  social-campaign  # Multi-platform social assets
+  documentation    # Technical documentation graphics
+  video-storyboard # Video thumbnail sequence
+```
+
+### 4.3 Consistency Engine
+
+#### 4.3.1 Reference System
+
+The reference system maintains visual consistency across steps:
+
+```yaml
+steps:
+  - id: character-base
+    action: generate
+    prompt: "Fantasy warrior character, detailed design sheet"
+    output: character-base.png
+
+  - id: character-action
+    action: generate
+    prompt: "The same character in a battle pose"
+    reference: ${character-base.output}  # Uses base as reference
+    reference_strength: 0.8              # 0.0-1.0 consistency weight
+    output: character-action.png
+```
+
+**Implementation approach:**
+- For models supporting image references (gpt-image-1): Use native reference input
+- For models without native support: Extract visual descriptors and inject into prompt
+- Store visual fingerprints for cross-session consistency
+
+#### 4.3.2 Style Profiles
+
+Define reusable style profiles:
+
+```yaml
+# ~/.imggen/styles/cyberpunk.yaml
+name: cyberpunk
+description: Neon-lit cyberpunk aesthetic
+prompts:
+  prefix: "Cyberpunk aesthetic, neon lighting, "
+  suffix: ", highly detailed, cinematic composition"
+parameters:
+  model: gpt-image-1
+  quality: hd
+colors:
+  primary: "#00ff88"
+  secondary: "#ff0066"
+  accent: "#00d4ff"
+```
+
+Usage:
+```yaml
+steps:
+  - id: scene
+    action: generate
+    style: cyberpunk        # Apply style profile
+    prompt: "Street scene"  # Combined with style prompts
+```
+
+### 4.4 Output and Reporting
+
+#### 4.4.1 Execution Report
+
+After workflow completion, generate report:
+
+```
+Workflow: brand-asset-suite
+Status: Completed (4/4 steps)
+Duration: 2m 34s
+Total Cost: $0.48
+
+Steps:
+  [OK] hero-image          - hero.png (1792x1024) - $0.17
+  [OK] social-square       - social-square.png (1024x1024) - $0.04
+  [OK] icon-variants       - icons/icon-{1-3}.png - $0.12
+  [OK] thumbnail           - thumbnail.png (1280x720) - $0.15
+
+Output Directory: ./output/brand-assets-20260128-143022/
+```
+
+#### 4.4.2 Output Organization
+
+```
+output/
+  workflow-name-timestamp/
+    hero.png
+    social-square.png
+    icons/
+      icon-1.png
+      icon-2.png
+      icon-3.png
+    thumbnail.png
+    workflow.log          # Execution log
+    workflow.report.json  # Machine-readable report
+    workflow.yaml         # Copy of executed workflow
+```
+
+### 4.5 Integration Points
+
+#### 4.5.1 Environment Variables
+
+```bash
+IMGGEN_WORKFLOW_DIR      # Default workflow search path
+IMGGEN_STYLES_DIR        # Style profiles directory
+IMGGEN_DEFAULT_OUTPUT    # Default output directory
+IMGGEN_COST_LIMIT        # Global cost limit
+IMGGEN_PARALLEL          # Default parallelism
+```
+
+#### 4.5.2 Exit Codes
+
+```
+0 - Success
+1 - General error
+2 - Workflow validation error
+3 - Step execution error
+4 - Cost limit exceeded
+5 - User interruption
+```
+
+#### 4.5.3 JSON Output Mode
+
+```bash
+imggen workflow run workflow.yaml --json
+
+# Output:
+{
+  "workflow": "brand-asset-suite",
+  "status": "completed",
+  "duration_ms": 154000,
+  "total_cost": 0.48,
+  "steps": [
+    {
+      "id": "hero-image",
+      "status": "completed",
+      "output": "/abs/path/to/hero.png",
+      "cost": 0.17,
+      "duration_ms": 45000
+    }
+  ]
+}
+```
+
+### 4.6 Technical Architecture
+
+#### 4.6.1 Component Overview
+
+```
+cmd/imggen/
+  workflow.go           # CLI command handlers
+
+internal/
+  workflow/
+    parser.go           # YAML/JSON workflow parsing
+    validator.go        # Schema validation
+    executor.go         # Workflow execution engine
+    scheduler.go        # Step dependency resolution
+    variables.go        # Variable substitution
+
+  consistency/
+    reference.go        # Image reference handling
+    fingerprint.go      # Visual fingerprint extraction
+    styles.go           # Style profile management
+
+  templates/
+    embedded.go         # Built-in workflow templates
+
+pkg/
+  models/
+    workflow.go         # Workflow data structures
+```
+
+#### 4.6.2 Execution Flow
+
+```
+Parse Workflow File
+        |
+        v
+Validate Schema & References
+        |
+        v
+Resolve Variables (env, file, defaults)
+        |
+        v
+Build Dependency Graph
+        |
+        v
+Schedule Execution (parallel where possible)
+        |
+        v
+Execute Steps:
+  - Check cost limit
+  - Resolve step-specific variables
+  - Apply style profiles
+  - Handle references for consistency
+  - Execute generation/edit/transform
+  - Store outputs
+  - Update execution state
+        |
+        v
+Generate Report
+```
+
+### 4.7 Agentic Workflow Generation
+
+A key differentiator for imggen workflows is **built-in AI-powered workflow generation**. Users can describe their goals in natural language, and the tool generates complete, production-ready workflow YAML.
+
+#### 4.7.1 Core Concept
+
+Instead of manually writing YAML, users can leverage AI agents to:
+
+1. **Generate workflows from descriptions** - Describe what you want, get a working workflow
+2. **Refine existing workflows** - Ask AI to modify, optimize, or extend workflows
+3. **Debug and fix issues** - AI analyzes errors and suggests fixes
+4. **Learn best practices** - AI explains generated workflows and suggests improvements
+
+#### 4.7.2 CLI Commands
+
+```bash
+# Generate a workflow from natural language
+imggen workflow generate "Create a brand asset suite with logo, social media images, and hero banner for a fintech startup called PayFlow"
+
+# Interactive workflow building with AI guidance
+imggen workflow generate --interactive
+
+# Generate with specific constraints
+imggen workflow generate "Product photography for e-commerce" \
+  --model gpt-image-1 \
+  --max-steps 10 \
+  --cost-limit 2.00
+
+# Refine an existing workflow
+imggen workflow refine brand-assets.yaml "Add Instagram story variants and a video teaser"
+
+# Explain what a workflow does
+imggen workflow explain complex-workflow.yaml
+
+# Fix errors in a workflow
+imggen workflow fix broken-workflow.yaml
+
+# Suggest optimizations
+imggen workflow optimize slow-workflow.yaml
+```
+
+#### 4.7.3 Example: Natural Language to Workflow
+
+**User Input:**
+```bash
+imggen workflow generate "I need consistent character art for my RPG game.
+The character is a cyberpunk hacker named Zero - female, neon green hair,
+AR glasses, black hoodie. I need a reference sheet, 4 expression portraits,
+and 3 action poses. Output should be transparent PNGs for game engine."
+```
+
+**Generated Output (saved to `zero-character.yaml`):**
+```yaml
+name: zero-character-sheet
+description: Cyberpunk hacker character "Zero" - reference, portraits, and poses
+version: 1.0
+
+variables:
+  character_name: "Zero"
+  character_description: |
+    Female cyberpunk hacker, neon green hair styled in an undercut,
+    AR glasses with holographic display, black hoodie with tech patterns,
+    confident and skilled demeanor
+  art_style: "cyberpunk game art, cel-shaded, neon accents, high contrast"
+
+settings:
+  output_dir: ./characters/zero
+  parallel: 2
+
+steps:
+  - id: reference-sheet
+    action: generate
+    model: gpt-image-1
+    prompt: |
+      Character reference sheet for ${character_name}.
+      ${character_description}
+      Style: ${art_style}
+      Front-facing view, full design details visible.
+      Transparent background for game asset use.
+    size: 1024x1024
+    quality: hd
+    transparent: true
+    output: reference/zero-main.png
+
+  # ... AI generates all 8 steps with proper references
+```
+
+#### 4.7.4 Interactive Mode
+
+The `--interactive` flag enables a conversational workflow builder:
+
+```
+$ imggen workflow generate --interactive
+
+🤖 What kind of assets do you want to create?
+> Marketing materials for a mobile app launch
+
+🤖 What's the app name and what does it do?
+> FitTrack - a fitness tracking app with social features
+
+🤖 What's the visual style you're going for?
+> Modern, energetic, bright gradients, health/fitness vibe
+
+🤖 Which assets do you need? (select all that apply)
+  [x] App Store screenshots
+  [x] Social media posts
+  [x] Hero banner for website
+  [ ] Video trailer
+  [x] Press kit images
+
+🤖 Any specific color preferences?
+> Coral and teal gradient, white backgrounds
+
+📝 Generating workflow...
+
+✅ Created: fittrack-launch-assets.yaml
+   - 12 steps
+   - Estimated cost: $1.80
+   - Estimated time: 4 minutes
+
+Would you like me to:
+  [1] Run the workflow now
+  [2] Open for editing
+  [3] Explain the workflow
+  [4] Add more assets
+> 1
+```
+
+#### 4.7.5 AI Agent Integration
+
+imggen already integrates with AI CLI tools (Claude, Codex, Cursor, Gemini). The workflow generation feature leverages these integrations:
+
+```bash
+# Use specific AI provider for generation
+imggen workflow generate --agent claude "..."
+imggen workflow generate --agent codex "..."
+
+# Use local/custom AI endpoint
+imggen workflow generate --agent-url http://localhost:11434/api "..."
+```
+
+**AI Agent Capabilities:**
+
+| Capability | Description |
+|------------|-------------|
+| **Context Awareness** | Agent reads existing workflows, styles, and templates to maintain consistency |
+| **Cost Optimization** | Agent suggests efficient model choices and parallel execution strategies |
+| **Best Practice Injection** | Auto-applies consistency references, proper sizing, and output organization |
+| **Error Prevention** | Validates generated YAML and warns about potential issues |
+| **Learning from Usage** | Agent improves suggestions based on user's workflow history |
+
+#### 4.7.6 Workflow Refinement
+
+Beyond generation, AI agents can modify existing workflows:
+
+```bash
+# Add new steps to existing workflow
+imggen workflow refine campaign.yaml "Add dark mode variants for all images"
+
+# Optimize for cost
+imggen workflow refine campaign.yaml --optimize cost
+# Output: "Reduced estimated cost from $3.20 to $1.85 by:
+#          - Consolidating similar prompts
+#          - Using smaller sizes where appropriate
+#          - Enabling parallel execution"
+
+# Optimize for quality
+imggen workflow refine campaign.yaml --optimize quality
+# Output: "Enhanced quality settings:
+#          - Upgraded to HD quality for hero images
+#          - Added reference chains for better consistency
+#          - Increased output resolution for print assets"
+
+# Convert between formats
+imggen workflow refine campaign.json --format yaml > campaign.yaml
+```
+
+#### 4.7.7 Workflow Explanation
+
+AI can explain complex workflows in plain language:
+
+```bash
+$ imggen workflow explain brand-suite.yaml
+
+📋 Workflow: brand-suite (v1.0)
+
+This workflow generates a complete brand asset suite for "${brand_name}".
+
+📊 Overview:
+  - 8 total steps
+  - 3 parallel execution groups
+  - Uses gpt-image-1 for all generation
+  - Estimated cost: $1.20-$1.60
+
+🔄 Execution Flow:
+
+  Step 1: logo-primary
+  └─ Generates the main logo with brand colors and style
+
+  Step 2-3: (parallel)
+  ├─ logo-icon: Creates app icon variant (references logo-primary)
+  └─ hero-image: Creates website hero banner
+
+  Step 4-6: (parallel)
+  ├─ social-facebook: Facebook cover (references hero-image)
+  ├─ social-twitter: Twitter header (references hero-image)
+  └─ social-linkedin: LinkedIn banner (references hero-image)
+
+  ...
+
+💡 Consistency Strategy:
+  The workflow uses ${logo-primary.output} and ${hero-image.output}
+  as references to maintain visual consistency across all assets.
+```
+
+#### 4.7.8 Technical Implementation
+
+```
+internal/
+  agentic/
+    generator.go       # Natural language to workflow conversion
+    refiner.go         # Workflow modification and optimization
+    explainer.go       # Workflow explanation generation
+    interactive.go     # Interactive builder session management
+
+  agents/
+    claude.go          # Claude API integration
+    codex.go           # OpenAI Codex integration
+    gemini.go          # Gemini integration
+    local.go           # Local LLM support (Ollama, etc.)
+
+  prompts/
+    generation.go      # System prompts for workflow generation
+    refinement.go      # System prompts for modifications
+    templates/         # Few-shot examples for better generation
+```
+
+**Generation Pipeline:**
+
+```
+User Description
+       |
+       v
+Context Gathering
+  - Existing workflows
+  - Style profiles
+  - User preferences
+  - Available models
+       |
+       v
+AI Agent Processing
+  - Parse intent
+  - Determine steps needed
+  - Plan consistency strategy
+  - Generate YAML structure
+       |
+       v
+Validation & Enhancement
+  - Schema validation
+  - Cost estimation
+  - Parallel optimization
+  - Reference chain verification
+       |
+       v
+Output Workflow File
+```
+
+#### 4.7.9 Safety and Guardrails
+
+AI-generated workflows include safety measures:
+
+- **Cost limits enforced** - Generated workflows respect user's default cost limit
+- **Model validation** - Only uses models available to the user
+- **Prompt sanitization** - Prevents injection of harmful content
+- **Human review option** - `--review` flag pauses before saving for user approval
+- **Diff mode** - `--diff` shows changes when refining existing workflows
+
+```bash
+# Always review before saving
+imggen workflow generate --review "..."
+
+# Show diff when refining
+imggen workflow refine campaign.yaml --diff "Add video step"
+```
+
+### 4.8 Future Considerations (Out of Scope for v1.0)
+
+- Workflow marketplace/sharing platform
+- Visual workflow editor (web-based)
+- Real-time preview during execution
+- Advanced conditional logic (loops, error handling)
+- Multi-provider workflows (mix OpenAI, Stability, etc.)
+- Workflow versioning and rollback
+- Team collaboration features
+- Integration with design tools (Figma, Sketch)
+- Voice-to-workflow generation
+- Workflow version control with git-like semantics
+
+---
+
+## 5. Success Metrics and KPIs
+
+### 5.1 Adoption Metrics
+
+| Metric | Target (6 months) | Target (12 months) |
+|--------|-------------------|-------------------|
+| Monthly Active Users (workflow feature) | 1,000 | 5,000 |
+| Workflows executed per month | 10,000 | 100,000 |
+| Workflow files created | 500 | 2,500 |
+| GitHub stars increase | +500 | +2,000 |
+
+### 5.2 Engagement Metrics
+
+| Metric | Target |
+|--------|--------|
+| Average steps per workflow | >4 |
+| Workflow re-execution rate | >60% |
+| Template usage rate | >30% |
+| Variable override usage | >40% |
+
+### 5.3 Quality Metrics
+
+| Metric | Target |
+|--------|--------|
+| Workflow validation success rate | >95% |
+| Step execution success rate | >98% |
+| User-reported consistency satisfaction | >80% |
+| Average workflow execution time vs. manual | <25% |
+
+### 5.4 Business Metrics
+
+| Metric | Target |
+|--------|--------|
+| Enterprise/team adoption | 10 organizations |
+| Community workflow contributions | 50 templates |
+| Developer blog/tutorial mentions | 20 articles |
+| Integration with CI/CD platforms | GitHub Actions, GitLab CI |
+
+### 5.5 Measurement Approach
+
+- **Usage analytics:** Opt-in telemetry for workflow execution patterns
+- **User surveys:** Quarterly satisfaction surveys for workflow users
+- **GitHub metrics:** Stars, forks, issues, discussions related to workflows
+- **Community engagement:** Discord/Slack activity, workflow sharing
+
+---
+
+## 6. Risks and Mitigations
+
+### 6.1 Technical Risks
+
+| Risk | Likelihood | Impact | Mitigation |
+|------|------------|--------|------------|
+| **Consistency engine quality** - Reference system may not deliver consistent results | Medium | High | Implement multiple consistency strategies; allow user override; iterate based on feedback |
+| **API rate limits** - Parallel execution may hit provider limits | Medium | Medium | Implement adaptive rate limiting; respect provider quotas; queue management |
+| **Complex dependency resolution** - Circular dependencies or complex graphs | Low | Medium | Implement DAG validation; clear error messages; visualization tools |
+| **Large workflow memory usage** - Storing intermediate images in memory | Medium | Medium | Stream outputs to disk; lazy loading; configurable memory limits |
+
+### 6.2 Product Risks
+
+| Risk | Likelihood | Impact | Mitigation |
+|------|------------|--------|------------|
+| **Learning curve** - YAML/JSON workflow syntax may be barrier | Medium | High | Excellent documentation; templates; init command; error messages with suggestions |
+| **Feature creep** - Scope expansion during development | Medium | Medium | Strict v1.0 scope; phased roadmap; community input prioritization |
+| **Competition** - ComfyUI or others add CLI support | Low | Medium | Focus on developer experience; deep integration with CI/CD; first-mover advantage |
+| **Adoption inertia** - Users prefer single commands | Medium | Medium | Backward compatibility; gradual adoption path; compelling use cases |
+
+### 6.3 Market Risks
+
+| Risk | Likelihood | Impact | Mitigation |
+|------|------------|--------|------------|
+| **API pricing changes** - Provider cost increases | Medium | Medium | Multi-provider support roadmap; cost estimation and limits; transparent cost tracking |
+| **API deprecation** - Models or endpoints retired | Low | High | Abstraction layer; model aliasing; migration guides |
+| **Regulatory changes** - AI content restrictions | Low | Medium | Content policy compliance; audit logging; enterprise governance features |
+
+### 6.4 Mitigation Strategies
+
+**Documentation and Onboarding:**
+- Comprehensive workflow authoring guide
+- Video tutorials for common use cases
+- Interactive examples in documentation
+- IDE extensions for workflow editing (VS Code schema)
+
+**Community Building:**
+- Workflow template gallery
+- Community contribution guidelines
+- Showcase of user-created workflows
+- Regular feature spotlights
+
+**Incremental Rollout:**
+- Beta release with early adopter feedback
+- Feature flags for experimental capabilities
+- Gradual template expansion based on usage
+
+---
+
+## Appendix A: Example Workflows
+
+### A.1 Complete Brand Suite Workflow
+
+```yaml
+name: complete-brand-suite
+description: Generate a complete brand asset suite from a single brief
+version: 1.0
+
+variables:
+  brand_name:
+    description: Company or product name
+    required: true
+  tagline:
+    description: Brand tagline
+    default: ""
+  primary_color:
+    description: Primary brand color (e.g., "electric blue")
+    required: true
+  style:
+    description: Visual style description
+    default: "modern, clean, professional"
+  industry:
+    description: Industry context
+    default: "technology"
+
+settings:
+  output_dir: ./brand-assets
+  parallel: 2
+  cost_limit: 3.00
+
+steps:
+  - id: logo-primary
+    action: generate
+    model: gpt-image-1
+    prompt: |
+      Professional logo design for "${brand_name}".
+      Style: ${style}
+      Industry: ${industry}
+      Primary color: ${primary_color}
+      Clean vector-style design, suitable for all sizes.
+      White background.
+    size: 1024x1024
+    quality: hd
+    output: logo/logo-primary.png
+
+  - id: logo-icon
+    action: generate
+    model: gpt-image-1
+    prompt: |
+      App icon / favicon version of the ${brand_name} logo.
+      Simplified, recognizable at small sizes.
+      Same visual identity as primary logo.
+    size: 1024x1024
+    quality: hd
+    transparent: true
+    reference: ${logo-primary.output}
+    output: logo/logo-icon.png
+
+  - id: hero-image
+    action: generate
+    model: gpt-image-1
+    prompt: |
+      Hero banner image for ${brand_name} website.
+      ${tagline}
+      Style: ${style}
+      Color scheme based on ${primary_color}.
+      Professional, engaging, suitable for landing page.
+    size: 1792x1024
+    quality: hd
+    output: web/hero-banner.png
+
+  - id: social-facebook
+    action: generate
+    model: gpt-image-1
+    prompt: |
+      Facebook cover image for ${brand_name}.
+      Dimensions optimized for Facebook cover.
+      Consistent with brand hero image style.
+    size: 1792x1024
+    reference: ${hero-image.output}
+    output: social/facebook-cover.png
+
+  - id: social-twitter
+    action: generate
+    model: gpt-image-1
+    prompt: |
+      Twitter/X header image for ${brand_name}.
+      Wide format, consistent brand style.
+    size: 1536x1024
+    reference: ${hero-image.output}
+    output: social/twitter-header.png
+
+  - id: social-linkedin
+    action: generate
+    model: gpt-image-1
+    prompt: |
+      LinkedIn banner for ${brand_name}.
+      Professional tone, consistent brand identity.
+    size: 1536x1024
+    reference: ${hero-image.output}
+    output: social/linkedin-banner.png
+
+  - id: og-image
+    action: generate
+    model: gpt-image-1
+    prompt: |
+      Open Graph / social sharing image for ${brand_name}.
+      Clear, recognizable thumbnail.
+      Includes brand mark or name prominently.
+    size: 1024x1024
+    reference: ${logo-primary.output}
+    output: web/og-image.png
+```
+
+### A.2 Game Character Sheet Workflow
+
+```yaml
+name: game-character-sheet
+description: Generate consistent character art for game development
+version: 1.0
+
+variables:
+  character_name: "Aria"
+  character_description: |
+    Female elven ranger, silver hair in a braid, green eyes,
+    leather armor with nature motifs, carries a bow
+  art_style: "fantasy game art, stylized, vibrant colors"
+  background: "transparent"
+
+settings:
+  output_dir: ./characters/${character_name}
+  parallel: 2
+
+steps:
+  - id: reference-sheet
+    action: generate
+    model: gpt-image-1
+    prompt: |
+      Character reference sheet for ${character_name}.
+      ${character_description}
+      Style: ${art_style}
+      Show front view, detailed character design.
+      Clean background for game asset use.
+    size: 1024x1024
+    quality: hd
+    transparent: true
+    output: reference/main-reference.png
+
+  - id: portrait-neutral
+    action: generate
+    model: gpt-image-1
+    prompt: |
+      Portrait of ${character_name}, neutral expression.
+      ${character_description}
+      Bust shot, facing slightly left.
+      Style: ${art_style}
+    size: 1024x1024
+    transparent: true
+    reference: ${reference-sheet.output}
+    output: portraits/neutral.png
+
+  - id: portrait-happy
+    action: generate
+    model: gpt-image-1
+    prompt: |
+      Portrait of ${character_name}, happy/smiling expression.
+      Same character as reference, same style.
+    size: 1024x1024
+    transparent: true
+    reference: ${reference-sheet.output}
+    output: portraits/happy.png
+
+  - id: portrait-angry
+    action: generate
+    model: gpt-image-1
+    prompt: |
+      Portrait of ${character_name}, angry/determined expression.
+      Same character as reference, same style.
+    size: 1024x1024
+    transparent: true
+    reference: ${reference-sheet.output}
+    output: portraits/angry.png
+
+  - id: portrait-sad
+    action: generate
+    model: gpt-image-1
+    prompt: |
+      Portrait of ${character_name}, sad/concerned expression.
+      Same character as reference, same style.
+    size: 1024x1024
+    transparent: true
+    reference: ${reference-sheet.output}
+    output: portraits/sad.png
+
+  - id: pose-idle
+    action: generate
+    model: gpt-image-1
+    prompt: |
+      Full body ${character_name} in idle/standing pose.
+      Relaxed stance, weight on one leg.
+      ${art_style}
+    size: 1024x1536
+    transparent: true
+    reference: ${reference-sheet.output}
+    output: poses/idle.png
+
+  - id: pose-combat
+    action: generate
+    model: gpt-image-1
+    prompt: |
+      Full body ${character_name} in combat stance.
+      Drawing bow, ready to fire.
+      Dynamic action pose.
+      ${art_style}
+    size: 1024x1536
+    transparent: true
+    reference: ${reference-sheet.output}
+    output: poses/combat.png
+
+  - id: pose-running
+    action: generate
+    model: gpt-image-1
+    prompt: |
+      Full body ${character_name} in running pose.
+      Mid-stride, dynamic movement.
+      ${art_style}
+    size: 1024x1536
+    transparent: true
+    reference: ${reference-sheet.output}
+    output: poses/running.png
+```
+
+---
+
+## Appendix B: Competitive Feature Matrix
+
+| Feature | imggen Workflows | ComfyUI | Midjourney | Leonardo.AI | Replicate |
+|---------|-----------------|---------|------------|-------------|-----------|
+| CLI interface | Yes | No | No | No | Via code |
+| Declarative workflows | Yes | Visual | No | No | Via code |
+| Version control friendly | Yes | Limited | No | No | Yes |
+| Multi-step pipelines | Yes | Yes | No | No | Manual |
+| Character consistency | Built-in | Via nodes | --cref | Yes | Via model |
+| Style profiles | Yes | Via presets | --sref | Presets | Manual |
+| Variable substitution | Yes | Limited | No | No | Via code |
+| CI/CD integration | Native | Difficult | No | API | API |
+| Cost tracking | Yes | No | Limited | Yes | Yes |
+| Batch processing | Yes | Yes | No | Yes | Yes |
+| Local execution | Hybrid | Yes | No | No | No |
+| Template library | Yes | Community | No | Community | Community |
+
+---
+
+## Appendix C: Market Research Sources
+
+- [AI Image Trends 2026 - LTX Studio](https://ltx.studio/blog/ai-image-trends)
+- [Best AI Image Generators 2026 - Template.net](https://www.template.net/business/best-ai-image-generators-in-2026/)
+- [Agentic AI Trends 2026 - Kellton](https://www.kellton.com/kellton-tech-blog/agentic-ai-trends-2026)
+- [OpenAI for Developers 2025](https://developers.openai.com/blog/openai-for-developers-2025/)
+- [ComfyUI Automation Guide 2025 - Apatero](https://apatero.com/blog/automate-images-videos-comfyui-workflow-guide-2025)
+- [AI Character Consistency Guide 2025 - LaoZhang-AI](https://blog.laozhang.ai/ai-tools/mastering-character-consistency-chatgpt-image-generator/)
+- [Image Generation APIs Comparison 2025 - GrowthX](https://tech.growthx.ai/posts/image-generation-apis-comparison-2025-developer-guide)
+- [Creative Automation Pipeline Guide 2024-2025 - QuickCreator](https://quickcreator.io/blog/creative-automation-pipeline-ultimate-guide/)
+- [AI Tools for Brand Management 2025 - Frontify](https://www.frontify.com/en/guide/ai-tools-for-brand-management)
+- [Best Consistent Character AI Generators 2025 - Codingem](https://www.codingem.com/best-consistent-character-ai-image-generators/)
+
+---
+
+*Document Version: 1.0*
+*Last Updated: January 28, 2026*
+*Next Review: February 28, 2026*
