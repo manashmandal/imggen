@@ -265,6 +265,7 @@ func TestRunWorkflow(t *testing.T) {
 	resetFlags()
 	out := &bytes.Buffer{}
 	app := newTestApp(out)
+	t.Setenv("OPENAI_API_KEY", "test-key")
 
 	tmpDir := t.TempDir()
 	workflowPath := filepath.Join(tmpDir, "wf.yaml")
