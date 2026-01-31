@@ -214,6 +214,69 @@ func TestEngineRunOutputs_DefaultPattern(t *testing.T) {
 	}
 }
 
+func TestEngineRun_InvalidModel(t *testing.T) {
+	outDir := t.TempDir()
+	registry := models.DefaultRegistry()
+
+	engine := NewEngine(&mockProvider{}, image.NewSaver(), registry, os.Stdout, os.Stderr)
+	wf := &Workflow{
+		Steps: []Step{
+			{ID: "one", Prompt: "hello", Model: "unknown-model"},
+		},
+	}
+
+	_, err := engine.Run(context.Background(), wf, &RunOptions{
+		OutputDir:     outDir,
+		DefaultModel:  "gpt-image-1",
+		DefaultFormat: models.FormatPNG,
+	})
+	if err == nil || !strings.Contains(err.Error(), "unknown model") {
+		t.Fatalf("expected unknown model error, got %v", err)
+	}
+}
+
+func TestEngineRun_InvalidRequest(t *testing.T) {
+	outDir := t.TempDir()
+	registry := models.DefaultRegistry()
+
+	engine := NewEngine(&mockProvider{}, image.NewSaver(), registry, os.Stdout, os.Stderr)
+	wf := &Workflow{
+		Steps: []Step{
+			{ID: "one", Prompt: "hello", Count: -1},
+		},
+	}
+
+	_, err := engine.Run(context.Background(), wf, &RunOptions{
+		OutputDir:     outDir,
+		DefaultModel:  "gpt-image-1",
+		DefaultFormat: models.FormatPNG,
+	})
+	if err == nil {
+		t.Fatal("expected error for invalid request")
+	}
+}
+
+func TestEngineRun_MissingParam(t *testing.T) {
+	outDir := t.TempDir()
+	registry := models.DefaultRegistry()
+
+	engine := NewEngine(&mockProvider{}, image.NewSaver(), registry, os.Stdout, os.Stderr)
+	wf := &Workflow{
+		Steps: []Step{
+			{ID: "one", Prompt: "hello ${missing}"},
+		},
+	}
+
+	_, err := engine.Run(context.Background(), wf, &RunOptions{
+		OutputDir:     outDir,
+		DefaultModel:  "gpt-image-1",
+		DefaultFormat: models.FormatPNG,
+	})
+	if err == nil {
+		t.Fatal("expected error for missing param")
+	}
+}
+
 func writeTempWorkflow(t *testing.T, content string) string {
 	t.Helper()
 	dir := t.TempDir()
