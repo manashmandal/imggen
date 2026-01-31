@@ -305,6 +305,98 @@ workflow:
 	}
 }
 
+func TestRunWorkflow_InvalidFormat(t *testing.T) {
+	resetFlags()
+	out := &bytes.Buffer{}
+	app := newTestApp(out)
+	t.Setenv("OPENAI_API_KEY", "test-key")
+
+	tmpDir := t.TempDir()
+	workflowPath := filepath.Join(tmpDir, "wf.yaml")
+	content := `
+workflow:
+  name: "test"
+  steps:
+    - id: one
+      prompt: "hello world"
+`
+	if err := os.WriteFile(workflowPath, []byte(content), 0644); err != nil {
+		t.Fatalf("write workflow: %v", err)
+	}
+
+	flagWorkflowFormat = "gif"
+	cmd := &cobra.Command{}
+	if err := runWorkflow(cmd, []string{workflowPath}, app); err == nil {
+		t.Fatal("expected error for invalid format")
+	}
+}
+
+func TestRunWorkflow_ParseParamPairsError(t *testing.T) {
+	resetFlags()
+	out := &bytes.Buffer{}
+	app := newTestApp(out)
+	t.Setenv("OPENAI_API_KEY", "test-key")
+
+	tmpDir := t.TempDir()
+	workflowPath := filepath.Join(tmpDir, "wf.yaml")
+	content := `
+workflow:
+  name: "test"
+  steps:
+    - id: one
+      prompt: "hello world"
+`
+	if err := os.WriteFile(workflowPath, []byte(content), 0644); err != nil {
+		t.Fatalf("write workflow: %v", err)
+	}
+
+	flagWorkflowFormat = "png"
+	flagWorkflowParams = []string{"invalid"}
+	cmd := &cobra.Command{}
+	if err := runWorkflow(cmd, []string{workflowPath}, app); err == nil {
+		t.Fatal("expected error for invalid param pair")
+	}
+}
+
+func TestRunWorkflow_ParseFileError(t *testing.T) {
+	resetFlags()
+	out := &bytes.Buffer{}
+	app := newTestApp(out)
+	t.Setenv("OPENAI_API_KEY", "test-key")
+
+	flagWorkflowFormat = "png"
+	cmd := &cobra.Command{}
+	if err := runWorkflow(cmd, []string{"/nonexistent/workflow.yaml"}, app); err == nil {
+		t.Fatal("expected error for missing workflow file")
+	}
+}
+
+func TestRunWorkflow_InvalidRequest(t *testing.T) {
+	resetFlags()
+	out := &bytes.Buffer{}
+	app := newTestApp(out)
+	t.Setenv("OPENAI_API_KEY", "test-key")
+
+	tmpDir := t.TempDir()
+	workflowPath := filepath.Join(tmpDir, "wf.yaml")
+	content := `
+workflow:
+  name: "test"
+  steps:
+    - id: one
+      prompt: ""
+`
+	if err := os.WriteFile(workflowPath, []byte(content), 0644); err != nil {
+		t.Fatalf("write workflow: %v", err)
+	}
+
+	flagWorkflowFormat = "png"
+	cmd := &cobra.Command{}
+	if err := runWorkflow(cmd, []string{workflowPath}, app); err == nil {
+		t.Fatal("expected error for invalid workflow request")
+	}
+}
+
 func TestRunGenerate_APIKeyFromEnv(t *testing.T) {
 	resetFlags()
 	out := &bytes.Buffer{}
