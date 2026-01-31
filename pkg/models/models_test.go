@@ -2,6 +2,7 @@ package models
 
 import (
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -225,6 +226,50 @@ func TestConsistencyValidate(t *testing.T) {
 			err := tt.c.Validate()
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("Validate() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestNormalizeReferences_DefaultWeight(t *testing.T) {
+	refs := NormalizeReferences([]ReferenceImage{{Path: "a.png"}})
+	if refs[0].Weight != 1 {
+		t.Fatalf("Weight = %f, want 1", refs[0].Weight)
+	}
+}
+
+func TestValidateReferences_NegativeWeight(t *testing.T) {
+	err := ValidateReferences([]ReferenceImage{{Path: "a.png", Weight: -0.1}})
+	if err == nil {
+		t.Fatal("ValidateReferences() expected error for negative weight")
+	}
+}
+
+func TestBuildReferencePrompt(t *testing.T) {
+	base := "base prompt"
+	out := BuildReferencePrompt(base, []ReferenceImage{{Path: "a.png", Prompt: "keep style", Weight: 0.7}})
+	if !strings.Contains(out, "Reference guidance") {
+		t.Fatalf("expected reference guidance in prompt, got %q", out)
+	}
+}
+
+func TestConsistencyInputFidelity(t *testing.T) {
+	tests := []struct {
+		name string
+		c    *Consistency
+		want string
+	}{
+		{name: "nil", c: nil, want: ""},
+		{name: "identity", c: &Consistency{Mode: "identity", Strength: 0.2}, want: "high"},
+		{name: "style-low", c: &Consistency{Mode: "style", Strength: 0.2}, want: "low"},
+		{name: "style-high", c: &Consistency{Mode: "style", Strength: 0.8}, want: "high"},
+		{name: "default-high", c: &Consistency{Mode: "", Strength: 0.9}, want: "high"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.c.InputFidelity(); got != tt.want {
+				t.Fatalf("InputFidelity() = %q, want %q", got, tt.want)
 			}
 		})
 	}

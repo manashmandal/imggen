@@ -232,6 +232,18 @@ func TestProvider_Generate_WithReferences_UsesEditEndpoint(t *testing.T) {
 	}
 }
 
+func TestProvider_Generate_WithReferences_DallE2Multiple(t *testing.T) {
+	p, _ := New(&provider.Config{APIKey: "test", BaseURL: "http://example.com"}, models.DefaultRegistry())
+	req := models.NewRequest("test")
+	req.Model = "dall-e-2"
+	req.References = []models.ReferenceImage{{Path: "/tmp/a.png"}, {Path: "/tmp/b.png"}}
+
+	_, err := p.Generate(context.Background(), req)
+	if err == nil {
+		t.Fatal("expected error for multiple refs on dall-e-2")
+	}
+}
+
 func TestProvider_Generate_WithURL(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		resp := apiResponse{
@@ -1334,6 +1346,50 @@ func TestProvider_Edit_WithAllOptions(t *testing.T) {
 	_, err := p.Edit(context.Background(), req)
 	if err != nil {
 		t.Fatalf("Edit() with all options error = %v", err)
+	}
+}
+
+func TestProvider_Edit_MultipleImagesFields(t *testing.T) {
+	imageData := []byte{0x89, 0x50, 0x4E, 0x47, 0x0D}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseMultipartForm(10 << 20); err != nil {
+			t.Fatalf("ParseMultipartForm() error = %v", err)
+		}
+		if r.MultipartForm == nil {
+			t.Fatal("expected multipart form")
+		}
+		if r.MultipartForm.Value["quality"][0] != "high" {
+			t.Fatalf("quality = %v, want high", r.MultipartForm.Value["quality"])
+		}
+		if r.MultipartForm.Value["background"][0] != "transparent" {
+			t.Fatalf("background = %v, want transparent", r.MultipartForm.Value["background"])
+		}
+		if r.MultipartForm.Value["input_fidelity"][0] != "high" {
+			t.Fatalf("input_fidelity = %v, want high", r.MultipartForm.Value["input_fidelity"])
+		}
+		files := r.MultipartForm.File["image[]"]
+		if len(files) != 2 {
+			t.Fatalf("expected 2 image[] files, got %d", len(files))
+		}
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"created":123,"data":[{"b64_json":"dGVzdA=="}]}`))
+	}))
+	defer server.Close()
+
+	p, _ := New(&provider.Config{APIKey: "test", BaseURL: server.URL}, models.DefaultRegistry())
+	req := &models.EditRequest{
+		Images:         [][]byte{imageData, imageData},
+		Prompt:         "test",
+		Model:          "gpt-image-1",
+		Quality:        "high",
+		Background:     "transparent",
+		InputFidelity:  "high",
+		ImageMimeTypes: []string{"image/png", "image/png"},
+	}
+
+	if _, err := p.Edit(context.Background(), req); err != nil {
+		t.Fatalf("Edit() error = %v", err)
 	}
 }
 

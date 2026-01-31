@@ -224,6 +224,76 @@ func TestRunGenerate_APIKeyFromFlag(t *testing.T) {
 	}
 }
 
+func TestBuildReferences_Errors(t *testing.T) {
+	_, err := buildReferences([]string{"a"}, []string{"p1", "p2"}, nil)
+	if err == nil {
+		t.Fatal("expected error for ref-prompt mismatch")
+	}
+	_, err = buildReferences([]string{"a"}, nil, []float64{1, 2})
+	if err == nil {
+		t.Fatal("expected error for ref-weight mismatch")
+	}
+	_, err = buildReferences([]string{""}, nil, nil)
+	if err == nil {
+		t.Fatal("expected error for empty ref path")
+	}
+}
+
+func TestBuildConsistency(t *testing.T) {
+	if c, err := buildConsistency("", 0); err != nil || c != nil {
+		t.Fatalf("expected nil consistency, got %v, err %v", c, err)
+	}
+	if _, err := buildConsistency("invalid", 0.5); err == nil {
+		t.Fatal("expected error for invalid mode")
+	}
+}
+
+func TestParseParamPairs(t *testing.T) {
+	params, err := parseParamPairs([]string{"key=value"})
+	if err != nil {
+		t.Fatalf("parseParamPairs() error = %v", err)
+	}
+	if params["key"] != "value" {
+		t.Fatalf("param not parsed")
+	}
+	if _, err := parseParamPairs([]string{"novalue"}); err == nil {
+		t.Fatal("expected error for invalid pair")
+	}
+}
+
+func TestRunWorkflow(t *testing.T) {
+	resetFlags()
+	out := &bytes.Buffer{}
+	app := newTestApp(out)
+
+	tmpDir := t.TempDir()
+	workflowPath := filepath.Join(tmpDir, "wf.yaml")
+	content := `
+workflow:
+  name: "test"
+  steps:
+    - id: one
+      prompt: "hello world"
+      outputs:
+        pattern: "out_{i}.png"
+`
+	if err := os.WriteFile(workflowPath, []byte(content), 0644); err != nil {
+		t.Fatalf("write workflow: %v", err)
+	}
+
+	flagWorkflowOutput = tmpDir
+	flagWorkflowFormat = "png"
+	flagWorkflowModel = "gpt-image-1"
+	flagWorkflowSize = ""
+	flagWorkflowQuality = ""
+	flagWorkflowParams = nil
+
+	cmd := &cobra.Command{}
+	if err := runWorkflow(cmd, []string{workflowPath}, app); err != nil {
+		t.Fatalf("runWorkflow() error = %v", err)
+	}
+}
+
 func TestRunGenerate_APIKeyFromEnv(t *testing.T) {
 	resetFlags()
 	out := &bytes.Buffer{}
