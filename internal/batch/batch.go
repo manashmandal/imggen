@@ -200,6 +200,15 @@ func (p *Processor) processItem(ctx context.Context, item Item, opts *Options, c
 	if item.Style != "" {
 		req.Style = item.Style
 	}
+	if item.Count > 0 {
+		req.Count = item.Count
+	}
+	if len(item.References) > 0 {
+		req.References = item.References
+	}
+	if item.Consistency != nil {
+		req.Consistency = item.Consistency
+	}
 
 	caps, ok := p.registry.Get(model)
 	if !ok {

@@ -389,11 +389,11 @@ func TestParseFile(t *testing.T) {
 			wantErr:  false,
 		},
 		{
-			name:     "unsupported extension",
+			name:     "yaml file",
 			filename: "test.yaml",
-			content:  "prompt: test",
-			want:     0,
-			wantErr:  true,
+			content:  "- prompt: one\n- prompt: two",
+			want:     2,
+			wantErr:  false,
 		},
 		{
 			name:     "no extension treated as txt",

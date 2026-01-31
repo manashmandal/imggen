@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 )
 
 var (
@@ -18,6 +19,9 @@ var (
 	ErrEditNotSupported          = errors.New("image editing not supported by model")
 	ErrNoImageData               = errors.New("image data is required for editing")
 	ErrInvalidDuration           = errors.New("invalid duration for model")
+	ErrReferenceNotSupported     = errors.New("reference images not supported by model")
+	ErrInvalidReference          = errors.New("invalid reference image")
+	ErrInvalidConsistency        = errors.New("invalid consistency settings")
 )
 
 type ProviderType string
@@ -47,6 +51,98 @@ func (f OutputFormat) String() string {
 	return string(f)
 }
 
+type ReferenceImage struct {
+	Path   string  `json:"path" yaml:"path"`
+	Prompt string  `json:"prompt,omitempty" yaml:"prompt,omitempty"`
+	Weight float64 `json:"weight,omitempty" yaml:"weight,omitempty"`
+}
+
+func NormalizeReferences(refs []ReferenceImage) []ReferenceImage {
+	normalized := make([]ReferenceImage, len(refs))
+	for i, ref := range refs {
+		normalized[i] = ref
+		if normalized[i].Weight == 0 {
+			normalized[i].Weight = 1
+		}
+	}
+	return normalized
+}
+
+func ValidateReferences(refs []ReferenceImage) error {
+	for i, ref := range refs {
+		if strings.TrimSpace(ref.Path) == "" {
+			return fmt.Errorf("%w: reference %d has empty path", ErrInvalidReference, i+1)
+		}
+		if ref.Weight < 0 {
+			return fmt.Errorf("%w: reference %d has negative weight", ErrInvalidReference, i+1)
+		}
+	}
+	return nil
+}
+
+func BuildReferencePrompt(base string, refs []ReferenceImage) string {
+	refs = NormalizeReferences(refs)
+	lines := make([]string, 0, len(refs))
+	for i, ref := range refs {
+		if ref.Prompt == "" && ref.Weight == 1 {
+			continue
+		}
+		if ref.Prompt != "" {
+			lines = append(lines, fmt.Sprintf("Reference %d: %s (weight %.2f)", i+1, ref.Prompt, ref.Weight))
+			continue
+		}
+		lines = append(lines, fmt.Sprintf("Reference %d (weight %.2f)", i+1, ref.Weight))
+	}
+	if len(lines) == 0 {
+		return base
+	}
+	return fmt.Sprintf("%s\n\nReference guidance:\n- %s", base, strings.Join(lines, "\n- "))
+}
+
+type Consistency struct {
+	Mode     string  `json:"mode,omitempty" yaml:"mode,omitempty"`
+	Strength float64 `json:"strength,omitempty" yaml:"strength,omitempty"`
+}
+
+func (c *Consistency) Validate() error {
+	if c == nil {
+		return nil
+	}
+	if c.Strength < 0 || c.Strength > 1 {
+		return ErrInvalidConsistency
+	}
+	if c.Mode == "" {
+		return nil
+	}
+	switch c.Mode {
+	case "identity", "style", "hybrid":
+		return nil
+	default:
+		return ErrInvalidConsistency
+	}
+}
+
+func (c *Consistency) InputFidelity() string {
+	if c == nil {
+		return ""
+	}
+	strengthHigh := c.Strength >= 0.5
+	switch c.Mode {
+	case "identity", "hybrid":
+		return "high"
+	case "style":
+		if strengthHigh {
+			return "high"
+		}
+		return "low"
+	default:
+		if strengthHigh {
+			return "high"
+		}
+		return ""
+	}
+}
+
 type VideoFormat string
 
 const (
@@ -62,6 +158,8 @@ type Request struct {
 	Style       string
 	Format      OutputFormat
 	Transparent bool
+	References  []ReferenceImage
+	Consistency *Consistency
 }
 
 func NewRequest(prompt string) *Request {
@@ -73,13 +171,18 @@ func NewRequest(prompt string) *Request {
 }
 
 type EditRequest struct {
-	Image  []byte
-	Mask   []byte
-	Prompt string
-	Model  string
-	Size   string
-	Count  int
-	Format OutputFormat
+	Image          []byte
+	Mask           []byte
+	Prompt         string
+	Model          string
+	Size           string
+	Count          int
+	Format         OutputFormat
+	Quality        string
+	Background     string
+	InputFidelity  string
+	Images         [][]byte
+	ImageMimeTypes []string
 }
 
 func NewEditRequest(image []byte, prompt string) *EditRequest {
@@ -92,8 +195,15 @@ func NewEditRequest(image []byte, prompt string) *EditRequest {
 }
 
 func (r *EditRequest) Validate() error {
-	if len(r.Image) == 0 {
+	if len(r.Image) == 0 && len(r.Images) == 0 {
 		return ErrNoImageData
+	}
+	if len(r.Images) > 0 {
+		for i, img := range r.Images {
+			if len(img) == 0 {
+				return fmt.Errorf("%w: reference image %d is empty", ErrInvalidReference, i+1)
+			}
+		}
 	}
 	if r.Prompt == "" {
 		return ErrEmptyPrompt
@@ -198,6 +308,21 @@ func (c *ModelCapabilities) Validate(req *Request) error {
 
 	if req.Transparent && req.Format != FormatPNG && req.Format != FormatWebP {
 		return ErrInvalidTransparencyFormat
+	}
+
+	if len(req.References) > 0 {
+		if !c.SupportsEdit {
+			return ErrReferenceNotSupported
+		}
+		if err := ValidateReferences(req.References); err != nil {
+			return err
+		}
+	}
+
+	if req.Consistency != nil {
+		if err := req.Consistency.Validate(); err != nil {
+			return err
+		}
 	}
 
 	return nil

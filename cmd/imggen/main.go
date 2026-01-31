@@ -26,6 +26,7 @@ import (
 	"github.com/manash/imggen/internal/register"
 	"github.com/manash/imggen/internal/repl"
 	"github.com/manash/imggen/internal/session"
+	"github.com/manash/imggen/internal/workflow"
 	"github.com/manash/imggen/pkg/models"
 )
 
@@ -35,20 +36,25 @@ var (
 )
 
 var (
-	flagModel       string
-	flagSize        string
-	flagQuality     string
-	flagCount       int
-	flagOutput      string
-	flagFormat      string
-	flagStyle       string
-	flagTransparent bool
-	flagAPIKey      string
-	flagShow        bool
-	flagInteractive bool
-	flagVerbose     bool
-	flagPrompts     []string
-	flagParallel    int
+	flagModel        string
+	flagSize         string
+	flagQuality      string
+	flagCount        int
+	flagOutput       string
+	flagFormat       string
+	flagStyle        string
+	flagTransparent  bool
+	flagAPIKey       string
+	flagShow         bool
+	flagInteractive  bool
+	flagVerbose      bool
+	flagPrompts      []string
+	flagParallel     int
+	flagRefs         []string
+	flagRefPrompts   []string
+	flagRefWeights   []float64
+	flagConsMode     string
+	flagConsStrength float64
 )
 
 var (
@@ -60,6 +66,15 @@ var (
 	flagBatchParallel    int
 	flagBatchStopOnError bool
 	flagBatchDelay       int
+)
+
+var (
+	flagWorkflowOutput  string
+	flagWorkflowModel   string
+	flagWorkflowSize    string
+	flagWorkflowQuality string
+	flagWorkflowFormat  string
+	flagWorkflowParams  []string
 )
 
 var (
@@ -165,6 +180,11 @@ Video Generation Examples:
 	cmd.Flags().StringVarP(&flagFormat, "format", "f", "png", "output format (png, jpeg, webp)")
 	cmd.Flags().StringVar(&flagStyle, "style", "", "style for dall-e-3 (vivid, natural)")
 	cmd.Flags().BoolVarP(&flagTransparent, "transparent", "t", false, "transparent background (gpt-image-1 only)")
+	cmd.Flags().StringArrayVar(&flagRefs, "ref", nil, "reference image path (repeatable)")
+	cmd.Flags().StringArrayVar(&flagRefPrompts, "ref-prompt", nil, "reference prompt aligned with --ref order")
+	cmd.Flags().Float64SliceVar(&flagRefWeights, "ref-weight", nil, "reference weight aligned with --ref order")
+	cmd.Flags().StringVar(&flagConsMode, "consistency-mode", "", "consistency mode (identity, style, hybrid)")
+	cmd.Flags().Float64Var(&flagConsStrength, "consistency-strength", 0, "consistency strength (0-1)")
 	cmd.Flags().StringVar(&flagAPIKey, "api-key", "", "API key (defaults to OPENAI_API_KEY)")
 	cmd.Flags().BoolVarP(&flagShow, "show", "S", false, "display image in terminal (Kitty graphics protocol)")
 	cmd.Flags().BoolVarP(&flagInteractive, "interactive", "i", false, "start interactive editing mode")
@@ -175,6 +195,7 @@ Video Generation Examples:
 	cmd.AddCommand(newCostCmd(app))
 	cmd.AddCommand(newDBCmd(app))
 	cmd.AddCommand(newBatchCmd(app))
+	cmd.AddCommand(newWorkflowCmd(app))
 	cmd.AddCommand(newRegisterCmd(app))
 	cmd.AddCommand(newKeysCmd(app))
 	cmd.AddCommand(newOCRCmd(app))
@@ -320,6 +341,18 @@ func runGenerate(_ *cobra.Command, args []string, app *App) error {
 	req.Style = flagStyle
 	req.Format = format
 	req.Transparent = flagTransparent
+	refs, err := buildReferences(flagRefs, flagRefPrompts, flagRefWeights)
+	if err != nil {
+		return err
+	}
+	if len(refs) > 0 {
+		req.References = refs
+	}
+	consistency, err := buildConsistency(flagConsMode, flagConsStrength)
+	if err != nil {
+		return err
+	}
+	req.Consistency = consistency
 
 	caps, ok := app.Registry.Get(flagModel)
 	if !ok {
@@ -397,6 +430,47 @@ func runGenerate(_ *cobra.Command, args []string, app *App) error {
 	return nil
 }
 
+func buildReferences(paths, prompts []string, weights []float64) ([]models.ReferenceImage, error) {
+	if len(prompts) > len(paths) {
+		return nil, fmt.Errorf("ref-prompt count (%d) exceeds ref count (%d)", len(prompts), len(paths))
+	}
+	if len(weights) > len(paths) {
+		return nil, fmt.Errorf("ref-weight count (%d) exceeds ref count (%d)", len(weights), len(paths))
+	}
+
+	refs := make([]models.ReferenceImage, len(paths))
+	for i, path := range paths {
+		ref := models.ReferenceImage{Path: path}
+		if i < len(prompts) {
+			ref.Prompt = prompts[i]
+		}
+		if i < len(weights) {
+			ref.Weight = weights[i]
+		}
+		refs[i] = ref
+	}
+
+	refs = models.NormalizeReferences(refs)
+	if err := models.ValidateReferences(refs); err != nil {
+		return nil, err
+	}
+	return refs, nil
+}
+
+func buildConsistency(mode string, strength float64) (*models.Consistency, error) {
+	if mode == "" && strength == 0 {
+		return nil, nil
+	}
+	consistency := &models.Consistency{
+		Mode:     mode,
+		Strength: strength,
+	}
+	if err := consistency.Validate(); err != nil {
+		return nil, err
+	}
+	return consistency, nil
+}
+
 func runMultiPrompt(ctx context.Context, app *App, apiKey string, format models.OutputFormat) error {
 	outputDir := flagOutput
 	if outputDir == "" {
@@ -433,10 +507,20 @@ func runMultiPrompt(ctx context.Context, app *App, apiKey string, format models.
 	}
 
 	items := make([]batch.Item, len(flagPrompts))
+	refs, err := buildReferences(flagRefs, flagRefPrompts, flagRefWeights)
+	if err != nil {
+		return err
+	}
+	consistency, err := buildConsistency(flagConsMode, flagConsStrength)
+	if err != nil {
+		return err
+	}
 	for i, prompt := range flagPrompts {
 		items[i] = batch.Item{
-			Index:  i + 1,
-			Prompt: prompt,
+			Index:       i + 1,
+			Prompt:      prompt,
+			References:  refs,
+			Consistency: consistency,
 		}
 	}
 
@@ -818,6 +902,117 @@ func runBatch(_ *cobra.Command, args []string, app *App) error {
 	}
 
 	return nil
+}
+
+func newWorkflowCmd(app *App) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "workflow <workflow-file>",
+		Short: "Run a YAML workflow pipeline",
+		Long: `Run a YAML workflow pipeline with multi-step image generation.
+
+Examples:
+  imggen workflow pipeline.yaml -o ./output
+  imggen workflow pipeline.yaml --param character_ref=./refs/hero.png`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runWorkflow(cmd, args, app)
+		},
+	}
+
+	cmd.Flags().StringVarP(&flagWorkflowOutput, "output", "o", "", "output directory for generated images")
+	cmd.Flags().StringVarP(&flagWorkflowModel, "model", "m", "gpt-image-1", "default model for workflow steps without model specified")
+	cmd.Flags().StringVarP(&flagWorkflowSize, "size", "s", "", "default image size")
+	cmd.Flags().StringVarP(&flagWorkflowQuality, "quality", "q", "", "default quality level")
+	cmd.Flags().StringVarP(&flagWorkflowFormat, "format", "f", "png", "default output format (png, jpeg, webp)")
+	cmd.Flags().StringArrayVar(&flagWorkflowParams, "param", nil, "workflow parameter override (key=value)")
+	cmd.Flags().StringVar(&flagAPIKey, "api-key", "", "API key (defaults to OPENAI_API_KEY)")
+	cmd.Flags().BoolVarP(&flagVerbose, "verbose", "v", false, "log HTTP requests and responses")
+
+	return cmd
+}
+
+func runWorkflow(_ *cobra.Command, args []string, app *App) error {
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
+
+	workflowFile := args[0]
+
+	apiKey, _, err := keys.GetAPIKey(flagAPIKey, "openai", "OPENAI_API_KEY")
+	if err != nil {
+		return err
+	}
+
+	format := models.OutputFormat(flagWorkflowFormat)
+	if !format.IsValid() {
+		return fmt.Errorf("invalid format %q: must be one of %v", flagWorkflowFormat, models.ValidFormats())
+	}
+
+	params, err := parseParamPairs(flagWorkflowParams)
+	if err != nil {
+		return err
+	}
+
+	wf, err := workflow.ParseFile(workflowFile)
+	if err != nil {
+		return err
+	}
+
+	outputDir := flagWorkflowOutput
+	if outputDir == "" {
+		outputDir = "."
+		fmt.Fprintln(app.Out, "\033[33mWarning: No output directory specified. Images will be saved to current directory.\033[0m")
+	}
+
+	providerCfg := &provider.Config{APIKey: apiKey, Verbose: flagVerbose}
+	prov, err := app.NewProvider(providerCfg, app.Registry)
+	if err != nil {
+		return fmt.Errorf("failed to create provider: %w", err)
+	}
+
+	engine := workflow.NewEngine(prov, app.NewSaver(), app.Registry, app.Out, app.Err)
+	opts := &workflow.RunOptions{
+		OutputDir:      outputDir,
+		DefaultModel:   flagWorkflowModel,
+		DefaultSize:    flagWorkflowSize,
+		DefaultQuality: flagWorkflowQuality,
+		DefaultFormat:  format,
+		Params:         params,
+	}
+
+	results, err := engine.Run(ctx, wf, opts)
+	if err != nil {
+		return err
+	}
+
+	var totalCost float64
+	var totalImages int
+	for _, res := range results {
+		totalCost += res.Cost
+		totalImages += len(res.Paths)
+		fmt.Fprintf(app.Out, "Step %s: saved %d image(s)\n", res.StepID, len(res.Paths))
+	}
+	if totalCost > 0 {
+		fmt.Fprintf(app.Out, "Total cost: $%.4f (%d image(s))\n", totalCost, totalImages)
+	}
+
+	return nil
+}
+
+func parseParamPairs(params []string) (map[string]string, error) {
+	result := make(map[string]string, len(params))
+	for _, pair := range params {
+		if strings.TrimSpace(pair) == "" {
+			continue
+		}
+		parts := strings.SplitN(pair, "=", 2)
+		if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" {
+			return nil, fmt.Errorf("invalid param %q: expected key=value", pair)
+		}
+		key := strings.TrimSpace(parts[0])
+		value := strings.TrimSpace(parts[1])
+		result[key] = value
+	}
+	return result, nil
 }
 
 func isTerminal() bool {

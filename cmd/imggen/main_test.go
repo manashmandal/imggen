@@ -68,6 +68,14 @@ func resetFlags() {
 	flagAPIKey = ""
 	flagShow = false
 	flagInteractive = false
+	flagVerbose = false
+	flagPrompts = nil
+	flagParallel = 1
+	flagRefs = nil
+	flagRefPrompts = nil
+	flagRefWeights = nil
+	flagConsMode = ""
+	flagConsStrength = 0
 	flagDBBackup = false
 	flagRegisterDryRun = false
 	flagRegisterForce = false
@@ -76,6 +84,13 @@ func resetFlags() {
 	flagVideoDuration = 0
 	flagVideoSize = ""
 	flagVideoOutput = ""
+	// Workflow flags
+	flagWorkflowOutput = ""
+	flagWorkflowModel = "gpt-image-1"
+	flagWorkflowSize = ""
+	flagWorkflowQuality = ""
+	flagWorkflowFormat = "png"
+	flagWorkflowParams = nil
 }
 
 // newTestApp creates an App configured for testing.
@@ -138,7 +153,7 @@ func TestNewRootCmd(t *testing.T) {
 	}
 
 	// Check flags exist
-	flags := []string{"model", "size", "quality", "count", "output", "format", "style", "transparent", "api-key", "show"}
+	flags := []string{"model", "size", "quality", "count", "output", "format", "style", "transparent", "ref", "ref-prompt", "ref-weight", "consistency-mode", "consistency-strength", "api-key", "show"}
 	for _, name := range flags {
 		if cmd.Flags().Lookup(name) == nil {
 			t.Errorf("flag --%s not found", name)

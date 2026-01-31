@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -189,6 +190,45 @@ func TestProvider_Generate_Success(t *testing.T) {
 	}
 	if string(resp.Images[0].Data) != "fake image data" {
 		t.Errorf("Generate() image data mismatch")
+	}
+}
+
+func TestProvider_Generate_WithReferences_UsesEditEndpoint(t *testing.T) {
+	imageData := []byte{0x89, 0x50, 0x4E, 0x47, 0x0D}
+	tmpFile, err := os.CreateTemp("", "ref-*.png")
+	if err != nil {
+		t.Fatalf("CreateTemp() error = %v", err)
+	}
+	defer os.Remove(tmpFile.Name())
+	if _, err := tmpFile.Write(imageData); err != nil {
+		t.Fatalf("Write() error = %v", err)
+	}
+	if err := tmpFile.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/images/edits" {
+			t.Fatalf("expected /images/edits, got %s", r.URL.Path)
+		}
+		encoded := base64.StdEncoding.EncodeToString([]byte("test image data"))
+		resp := fmt.Sprintf(`{"created": 123, "data": [{"b64_json": "%s"}]}`, encoded)
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(resp))
+	}))
+	defer server.Close()
+
+	p, _ := New(&provider.Config{APIKey: "test", BaseURL: server.URL}, models.DefaultRegistry())
+	req := models.NewRequest("test prompt")
+	req.Model = "gpt-image-1"
+	req.References = []models.ReferenceImage{{Path: tmpFile.Name()}}
+
+	resp, err := p.Generate(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+	if len(resp.Images) != 1 {
+		t.Errorf("Generate() returned %d images, want 1", len(resp.Images))
 	}
 }
 

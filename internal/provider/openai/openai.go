@@ -105,6 +105,9 @@ func (p *Provider) ListModels() []string {
 }
 
 func (p *Provider) Generate(ctx context.Context, req *models.Request) (*models.Response, error) {
+	if len(req.References) > 0 {
+		return p.generateWithReferences(ctx, req)
+	}
 	apiReq := p.buildAPIRequest(req)
 
 	jsonData, err := json.Marshal(apiReq)
@@ -156,6 +159,49 @@ func (p *Provider) Generate(ctx context.Context, req *models.Request) (*models.R
 
 	response.Cost = p.costCalc.Calculate(models.ProviderOpenAI, req.Model, req.Size, req.Quality, len(response.Images))
 	return response, nil
+}
+
+func (p *Provider) generateWithReferences(ctx context.Context, req *models.Request) (*models.Response, error) {
+	if !p.SupportsEdit(req.Model) {
+		return nil, fmt.Errorf("%w: %s", provider.ErrEditNotSupported, req.Model)
+	}
+
+	if req.Model == "dall-e-2" && len(req.References) > 1 {
+		return nil, fmt.Errorf("%w: dall-e-2 supports only one reference image", provider.ErrEditNotSupported)
+	}
+
+	refs := models.NormalizeReferences(req.References)
+	images, mimeTypes, err := loadReferenceImages(refs)
+	if err != nil {
+		return nil, err
+	}
+
+	prompt := models.BuildReferencePrompt(req.Prompt, refs)
+
+	background := ""
+	if req.Transparent {
+		background = "transparent"
+	}
+
+	inputFidelity := ""
+	if req.Consistency != nil {
+		inputFidelity = req.Consistency.InputFidelity()
+	}
+
+	editReq := &models.EditRequest{
+		Images:         images,
+		ImageMimeTypes: mimeTypes,
+		Prompt:         prompt,
+		Model:          req.Model,
+		Size:           req.Size,
+		Count:          req.Count,
+		Format:         req.Format,
+		Quality:        req.Quality,
+		Background:     background,
+		InputFidelity:  inputFidelity,
+	}
+
+	return p.Edit(ctx, editReq)
 }
 
 func (p *Provider) buildAPIRequest(req *models.Request) *apiRequest {
@@ -258,6 +304,26 @@ func (p *Provider) logMultipartRequest(method, url string, headers http.Header, 
 	fmt.Fprintln(os.Stderr, "Body (multipart form):")
 	fmt.Fprintf(os.Stderr, "  model: %s\n", req.Model)
 	fmt.Fprintf(os.Stderr, "  prompt: %s\n", req.Prompt)
+	if len(req.Images) > 0 {
+		fmt.Fprintf(os.Stderr, "  images: %d\n", len(req.Images))
+	} else {
+		fmt.Fprintf(os.Stderr, "  images: 1\n")
+	}
+	if req.Size != "" {
+		fmt.Fprintf(os.Stderr, "  size: %s\n", req.Size)
+	}
+	if req.Count > 0 {
+		fmt.Fprintf(os.Stderr, "  n: %d\n", req.Count)
+	}
+	if req.Quality != "" {
+		fmt.Fprintf(os.Stderr, "  quality: %s\n", req.Quality)
+	}
+	if req.Background != "" {
+		fmt.Fprintf(os.Stderr, "  background: %s\n", req.Background)
+	}
+	if req.InputFidelity != "" {
+		fmt.Fprintf(os.Stderr, "  input_fidelity: %s\n", req.InputFidelity)
+	}
 	fmt.Fprintf(os.Stderr, "  image: [%d bytes]\n", len(req.Image))
 	if len(req.Mask) > 0 {
 		fmt.Fprintf(os.Stderr, "  mask: [%d bytes]\n", len(req.Mask))

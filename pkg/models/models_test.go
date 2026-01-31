@@ -174,6 +174,62 @@ func TestModelCapabilities_Validate(t *testing.T) {
 	}
 }
 
+func TestModelCapabilities_Validate_ReferenceNotSupported(t *testing.T) {
+	cap := &ModelCapabilities{
+		Name:         "test-model",
+		MaxImages:    1,
+		SupportsEdit: false,
+	}
+	req := &Request{
+		Prompt:     "test",
+		Count:      1,
+		References: []ReferenceImage{{Path: "/tmp/ref.png"}},
+	}
+	if err := cap.Validate(req); err == nil || !errors.Is(err, ErrReferenceNotSupported) {
+		t.Fatalf("Validate() error = %v, want %v", err, ErrReferenceNotSupported)
+	}
+}
+
+func TestModelCapabilities_Validate_ReferenceInvalid(t *testing.T) {
+	cap := &ModelCapabilities{
+		Name:         "test-model",
+		MaxImages:    1,
+		SupportsEdit: true,
+	}
+	req := &Request{
+		Prompt:     "test",
+		Count:      1,
+		References: []ReferenceImage{{Path: ""}},
+	}
+	if err := cap.Validate(req); err == nil || !errors.Is(err, ErrInvalidReference) {
+		t.Fatalf("Validate() error = %v, want %v", err, ErrInvalidReference)
+	}
+}
+
+func TestConsistencyValidate(t *testing.T) {
+	tests := []struct {
+		name    string
+		c       *Consistency
+		wantErr bool
+	}{
+		{name: "nil", c: nil, wantErr: false},
+		{name: "identity", c: &Consistency{Mode: "identity", Strength: 0.7}, wantErr: false},
+		{name: "style", c: &Consistency{Mode: "style", Strength: 0.2}, wantErr: false},
+		{name: "hybrid", c: &Consistency{Mode: "hybrid", Strength: 1}, wantErr: false},
+		{name: "invalid mode", c: &Consistency{Mode: "other", Strength: 0.5}, wantErr: true},
+		{name: "invalid strength", c: &Consistency{Mode: "identity", Strength: 1.5}, wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.c.Validate()
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("Validate() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
 func TestModelCapabilities_Validate_NoStyleSupport(t *testing.T) {
 	cap := &ModelCapabilities{
 		Name:          "no-style-model",
