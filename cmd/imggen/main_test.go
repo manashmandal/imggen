@@ -397,6 +397,52 @@ workflow:
 	}
 }
 
+func TestRunGenerate_WithReferences(t *testing.T) {
+	resetFlags()
+	out := &bytes.Buffer{}
+	app := newTestApp(out)
+	flagAPIKey = "test-api-key"
+
+	tmpDir := t.TempDir()
+	refPath := filepath.Join(tmpDir, "ref.png")
+	if err := os.WriteFile(refPath, []byte{0x89, 0x50, 0x4E, 0x47}, 0644); err != nil {
+		t.Fatalf("write ref: %v", err)
+	}
+
+	flagRefs = []string{refPath}
+	flagRefPrompts = []string{"keep style"}
+	flagRefWeights = []float64{0.8}
+
+	cmd := &cobra.Command{}
+	if err := runGenerate(cmd, []string{"test prompt"}, app); err != nil {
+		t.Fatalf("runGenerate() error = %v", err)
+	}
+}
+
+func TestRunMultiPrompt_WithReferences(t *testing.T) {
+	resetFlags()
+	out := &bytes.Buffer{}
+	app := newTestApp(out)
+	flagAPIKey = "test-api-key"
+
+	tmpDir := t.TempDir()
+	refPath := filepath.Join(tmpDir, "ref.png")
+	if err := os.WriteFile(refPath, []byte{0x89, 0x50, 0x4E, 0x47}, 0644); err != nil {
+		t.Fatalf("write ref: %v", err)
+	}
+
+	flagRefs = []string{refPath}
+	flagRefPrompts = []string{"keep style"}
+	flagRefWeights = []float64{0.8}
+	flagPrompts = []string{"one", "two"}
+	flagOutput = tmpDir
+
+	format := models.FormatPNG
+	if err := runMultiPrompt(context.Background(), app, flagAPIKey, format); err != nil {
+		t.Fatalf("runMultiPrompt() error = %v", err)
+	}
+}
+
 func TestRunGenerate_APIKeyFromEnv(t *testing.T) {
 	resetFlags()
 	out := &bytes.Buffer{}
