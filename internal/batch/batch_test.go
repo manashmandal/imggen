@@ -445,6 +445,13 @@ func TestParseYAML_Invalid(t *testing.T) {
 	}
 }
 
+func TestParseYAML_Empty(t *testing.T) {
+	_, err := ParseYAML(strings.NewReader(""))
+	if err == nil {
+		t.Fatal("ParseYAML() expected error for empty content")
+	}
+}
+
 func TestProcessorWithErrors(t *testing.T) {
 	t.Run("unknown model error", func(t *testing.T) {
 		out := &bytes.Buffer{}

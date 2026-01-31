@@ -244,6 +244,18 @@ func TestProvider_Generate_WithReferences_DallE2Multiple(t *testing.T) {
 	}
 }
 
+func TestProvider_Generate_WithReferences_UnsupportedModel(t *testing.T) {
+	p, _ := New(&provider.Config{APIKey: "test", BaseURL: "http://example.com"}, models.DefaultRegistry())
+	req := models.NewRequest("test")
+	req.Model = "dall-e-3"
+	req.References = []models.ReferenceImage{{Path: "/tmp/a.png"}}
+
+	_, err := p.Generate(context.Background(), req)
+	if err == nil {
+		t.Fatal("expected error for model without edit support")
+	}
+}
+
 func TestProvider_Generate_WithURL(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		resp := apiResponse{
@@ -1386,6 +1398,36 @@ func TestProvider_Edit_MultipleImagesFields(t *testing.T) {
 		Background:     "transparent",
 		InputFidelity:  "high",
 		ImageMimeTypes: []string{"image/png", "image/png"},
+	}
+
+	if _, err := p.Edit(context.Background(), req); err != nil {
+		t.Fatalf("Edit() error = %v", err)
+	}
+}
+
+func TestProvider_Edit_SingleImageFieldName(t *testing.T) {
+	imageData := []byte{0x89, 0x50, 0x4E, 0x47, 0x0D}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseMultipartForm(10 << 20); err != nil {
+			t.Fatalf("ParseMultipartForm() error = %v", err)
+		}
+		if r.MultipartForm == nil {
+			t.Fatal("expected multipart form")
+		}
+		if len(r.MultipartForm.File["image"]) != 1 {
+			t.Fatalf("expected image field, got %v", r.MultipartForm.File)
+		}
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"created":123,"data":[{"b64_json":"dGVzdA=="}]}`))
+	}))
+	defer server.Close()
+
+	p, _ := New(&provider.Config{APIKey: "test", BaseURL: server.URL}, models.DefaultRegistry())
+	req := &models.EditRequest{
+		Image:  imageData,
+		Prompt: "test",
+		Model:  "gpt-image-1",
 	}
 
 	if _, err := p.Edit(context.Background(), req); err != nil {

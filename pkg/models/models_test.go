@@ -253,6 +253,14 @@ func TestBuildReferencePrompt(t *testing.T) {
 	}
 }
 
+func TestBuildReferencePrompt_WeightOnly(t *testing.T) {
+	base := "base prompt"
+	out := BuildReferencePrompt(base, []ReferenceImage{{Path: "a.png", Weight: 0.5}})
+	if !strings.Contains(out, "weight") {
+		t.Fatalf("expected weight line, got %q", out)
+	}
+}
+
 func TestConsistencyInputFidelity(t *testing.T) {
 	tests := []struct {
 		name string

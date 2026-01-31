@@ -239,6 +239,16 @@ func TestBuildReferences_Errors(t *testing.T) {
 	}
 }
 
+func TestBuildReferences_Success(t *testing.T) {
+	refs, err := buildReferences([]string{"a.png"}, []string{"keep"}, []float64{0.5})
+	if err != nil {
+		t.Fatalf("buildReferences() error = %v", err)
+	}
+	if len(refs) != 1 || refs[0].Weight != 0.5 {
+		t.Fatalf("unexpected refs: %+v", refs)
+	}
+}
+
 func TestBuildConsistency(t *testing.T) {
 	if c, err := buildConsistency("", 0); err != nil || c != nil {
 		t.Fatalf("expected nil consistency, got %v, err %v", c, err)

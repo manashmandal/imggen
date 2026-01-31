@@ -65,6 +65,29 @@ func TestWorkflowValidate_DependsOnUnknown(t *testing.T) {
 	}
 }
 
+func TestWorkflowValidate_DuplicateID(t *testing.T) {
+	wf := &Workflow{
+		Steps: []Step{
+			{ID: "one", Prompt: "hello"},
+			{ID: "one", Prompt: "again"},
+		},
+	}
+	if err := wf.Validate(); err == nil {
+		t.Fatal("Validate() expected error for duplicate id")
+	}
+}
+
+func TestWorkflowValidate_InvalidFormat(t *testing.T) {
+	wf := &Workflow{
+		Steps: []Step{
+			{ID: "one", Prompt: "hello", Format: "gif"},
+		},
+	}
+	if err := wf.Validate(); err == nil {
+		t.Fatal("Validate() expected error for invalid format")
+	}
+}
+
 func TestApplyParams(t *testing.T) {
 	params := map[string]string{"name": "hero"}
 	out, err := applyParams("hello ${name}", params)
@@ -145,6 +168,46 @@ func TestEngineRunOutputs(t *testing.T) {
 		if !strings.Contains(filepath.Base(path), "out_") {
 			t.Fatalf("expected output pattern, got %s", path)
 		}
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("expected file to exist: %v", err)
+		}
+	}
+}
+
+func TestEngineRunOutputs_DefaultPattern(t *testing.T) {
+	outDir := t.TempDir()
+	registry := models.DefaultRegistry()
+
+	prov := &mockProvider{
+		generateFunc: func(_ context.Context, req *models.Request) (*models.Response, error) {
+			return &models.Response{
+				Images: []models.GeneratedImage{
+					{Data: []byte("img1"), Index: 0},
+					{Data: []byte("img2"), Index: 1},
+				},
+			}, nil
+		},
+	}
+
+	engine := NewEngine(prov, image.NewSaver(), registry, os.Stdout, os.Stderr)
+	wf := &Workflow{
+		Steps: []Step{
+			{ID: "one", Prompt: "hello"},
+		},
+	}
+
+	results, err := engine.Run(context.Background(), wf, &RunOptions{
+		OutputDir:     outDir,
+		DefaultModel:  "gpt-image-1",
+		DefaultFormat: models.FormatPNG,
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if len(results[0].Paths) != 2 {
+		t.Fatalf("expected 2 outputs, got %d", len(results[0].Paths))
+	}
+	for _, path := range results[0].Paths {
 		if _, err := os.Stat(path); err != nil {
 			t.Fatalf("expected file to exist: %v", err)
 		}
