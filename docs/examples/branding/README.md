@@ -8,6 +8,36 @@ This example showcases imggen's consistency workflow pipeline by generating a br
 - `workflow-branding.yaml`: Workflow definition used to generate the assets.
 - `outputs/`: Generated assets (logo variants, avatar, business card, letterhead, stickers).
 
+## Preview
+
+### Base Logo
+
+![Base Logo](./base_logo.png)
+
+### Logo Variants
+
+![Logo Variant 1](./outputs/logo_variant_1.png)
+![Logo Variant 2](./outputs/logo_variant_2.png)
+![Logo Variant 3](./outputs/logo_variant_3.png)
+
+### Social Avatar
+
+![Avatar](./outputs/avatar.png)
+
+### Business Card
+
+![Business Card](./outputs/business_card_front.png)
+
+### Letterhead
+
+![Letterhead](./outputs/letterhead.png)
+
+### Sticker Pack
+
+![Sticker 1](./outputs/sticker_1.png)
+![Sticker 2](./outputs/sticker_2.png)
+![Sticker 3](./outputs/sticker_3.png)
+
 ## How it Works
 
 The workflow takes the base logo and produces multiple brand assets while preserving the logo's silhouette and geometry via reference-image consistency.
