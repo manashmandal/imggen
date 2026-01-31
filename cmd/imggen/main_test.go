@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -10,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/manash/imggen/internal/batch"
+	"github.com/manash/imggen/internal/keys"
 	"github.com/spf13/cobra"
 
 	"github.com/manash/imggen/internal/display"
@@ -55,6 +58,26 @@ func (m *mockProvider) ListModels() []string {
 	return []string{"gpt-image-1", "dall-e-3", "dall-e-2"}
 }
 
+type mockOCRProvider struct {
+	mockProvider
+	ocrFunc     func(ctx context.Context, req *models.OCRRequest) (*models.OCRResponse, error)
+	suggestFunc func(ctx context.Context, req *models.OCRRequest) (json.RawMessage, error)
+}
+
+func (m *mockOCRProvider) OCR(ctx context.Context, req *models.OCRRequest) (*models.OCRResponse, error) {
+	if m.ocrFunc != nil {
+		return m.ocrFunc(ctx, req)
+	}
+	return &models.OCRResponse{Text: "ok"}, nil
+}
+
+func (m *mockOCRProvider) SuggestSchema(ctx context.Context, req *models.OCRRequest) (json.RawMessage, error) {
+	if m.suggestFunc != nil {
+		return m.suggestFunc(ctx, req)
+	}
+	return json.RawMessage(`{"type":"object"}`), nil
+}
+
 // resetFlags resets all global flags to their default values.
 func resetFlags() {
 	flagModel = "gpt-image-1"
@@ -79,6 +102,23 @@ func resetFlags() {
 	flagDBBackup = false
 	flagRegisterDryRun = false
 	flagRegisterForce = false
+	// Batch flags
+	flagBatchOutput = ""
+	flagBatchModel = "gpt-image-1"
+	flagBatchSize = ""
+	flagBatchQuality = ""
+	flagBatchFormat = "png"
+	flagBatchParallel = 1
+	flagBatchStopOnError = false
+	flagBatchDelay = 0
+	// OCR flags
+	flagOCRModel = "gpt-5-mini"
+	flagOCRSchema = ""
+	flagOCRSchemaName = ""
+	flagOCRSuggestSchema = false
+	flagOCRPrompt = ""
+	flagOCROutput = ""
+	flagOCRURL = ""
 	// Video flags
 	flagVideoModel = "sora-2"
 	flagVideoDuration = 0
@@ -440,6 +480,834 @@ func TestRunMultiPrompt_WithReferences(t *testing.T) {
 	format := models.FormatPNG
 	if err := runMultiPrompt(context.Background(), app, flagAPIKey, format); err != nil {
 		t.Fatalf("runMultiPrompt() error = %v", err)
+	}
+}
+
+func TestRunMultiPrompt_OutputDirCreate(t *testing.T) {
+	resetFlags()
+	out := &bytes.Buffer{}
+	app := newTestApp(out)
+	flagAPIKey = "test-api-key"
+
+	tmpDir := t.TempDir()
+	newDir := filepath.Join(tmpDir, "out")
+	flagOutput = newDir
+	flagPrompts = []string{"one"}
+
+	format := models.FormatPNG
+	if err := runMultiPrompt(context.Background(), app, flagAPIKey, format); err != nil {
+		t.Fatalf("runMultiPrompt() error = %v", err)
+	}
+	if _, err := os.Stat(newDir); err != nil {
+		t.Fatalf("expected output dir to exist: %v", err)
+	}
+}
+
+func TestRunMultiPrompt_OutputDirEmpty(t *testing.T) {
+	resetFlags()
+	out := &bytes.Buffer{}
+	app := newTestApp(out)
+	flagAPIKey = "test-api-key"
+
+	flagOutput = ""
+	flagPrompts = []string{"one"}
+
+	format := models.FormatPNG
+	if err := runMultiPrompt(context.Background(), app, flagAPIKey, format); err != nil {
+		t.Fatalf("runMultiPrompt() error = %v", err)
+	}
+}
+
+func TestRunMultiPrompt_ReferenceMismatch(t *testing.T) {
+	resetFlags()
+	out := &bytes.Buffer{}
+	app := newTestApp(out)
+	flagAPIKey = "test-api-key"
+
+	flagPrompts = []string{"one"}
+	flagRefs = []string{"ref.png"}
+	flagRefPrompts = []string{"a", "b"}
+
+	format := models.FormatPNG
+	if err := runMultiPrompt(context.Background(), app, flagAPIKey, format); err == nil {
+		t.Fatal("expected error for mismatched ref prompts")
+	}
+}
+
+func TestRunMultiPrompt_LogsCost(t *testing.T) {
+	resetFlags()
+	out := &bytes.Buffer{}
+	app := newTestApp(out)
+	flagAPIKey = "test-api-key"
+	t.Setenv("IMGGEN_CONFIG_DIR", t.TempDir())
+
+	app.NewProvider = func(cfg *provider.Config, registry *models.ModelRegistry) (provider.Provider, error) {
+		return &mockProvider{
+			generateFunc: func(ctx context.Context, req *models.Request) (*models.Response, error) {
+				return &models.Response{
+					Images: []models.GeneratedImage{{Data: []byte("ok"), Index: 0}},
+					Cost:   &models.CostInfo{Total: 0.04, PerImage: 0.04, Currency: "USD"},
+				}, nil
+			},
+		}, nil
+	}
+
+	flagPrompts = []string{"one"}
+	flagOutput = t.TempDir()
+
+	format := models.FormatPNG
+	if err := runMultiPrompt(context.Background(), app, flagAPIKey, format); err != nil {
+		t.Fatalf("runMultiPrompt() error = %v", err)
+	}
+}
+
+func TestRunMultiPrompt_OutputDirCreateError(t *testing.T) {
+	resetFlags()
+	out := &bytes.Buffer{}
+	app := newTestApp(out)
+	flagAPIKey = "test-api-key"
+
+	tmpDir := t.TempDir()
+	if err := os.Chmod(tmpDir, 0500); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	defer os.Chmod(tmpDir, 0700)
+
+	flagOutput = filepath.Join(tmpDir, "out")
+	flagPrompts = []string{"one"}
+
+	format := models.FormatPNG
+	if err := runMultiPrompt(context.Background(), app, flagAPIKey, format); err == nil {
+		t.Fatal("expected error for output dir create failure")
+	}
+}
+
+func TestRunMultiPrompt_OutputDirEmpty_Abort(t *testing.T) {
+	resetFlags()
+	out := &bytes.Buffer{}
+	app := newTestApp(out)
+	flagAPIKey = "test-api-key"
+
+	restoreTerm := setTerminal(t, true)
+	defer restoreTerm()
+	restoreStdin := setStdin(t, "n\n")
+	defer restoreStdin()
+
+	flagOutput = ""
+	flagPrompts = []string{"one"}
+
+	format := models.FormatPNG
+	if err := runMultiPrompt(context.Background(), app, flagAPIKey, format); err != nil {
+		t.Fatalf("runMultiPrompt() error = %v", err)
+	}
+}
+
+func TestRunMultiPrompt_OutputDirMissing_Confirm(t *testing.T) {
+	resetFlags()
+	out := &bytes.Buffer{}
+	app := newTestApp(out)
+	flagAPIKey = "test-api-key"
+
+	tmpDir := t.TempDir()
+	missingDir := filepath.Join(tmpDir, "out")
+
+	restoreTerm := setTerminal(t, true)
+	defer restoreTerm()
+	restoreStdin := setStdin(t, "y\n")
+	defer restoreStdin()
+
+	flagOutput = missingDir
+	flagPrompts = []string{"one"}
+
+	format := models.FormatPNG
+	if err := runMultiPrompt(context.Background(), app, flagAPIKey, format); err != nil {
+		t.Fatalf("runMultiPrompt() error = %v", err)
+	}
+	if _, err := os.Stat(missingDir); err != nil {
+		t.Fatalf("expected output dir to exist: %v", err)
+	}
+}
+func TestRunBatch_Success(t *testing.T) {
+	resetFlags()
+	out := &bytes.Buffer{}
+	app := newTestApp(out)
+	t.Setenv("OPENAI_API_KEY", "test-key")
+
+	tmpDir := t.TempDir()
+	inputFile := filepath.Join(tmpDir, "prompts.txt")
+	if err := os.WriteFile(inputFile, []byte("one\ntwo\n"), 0644); err != nil {
+		t.Fatalf("write prompts: %v", err)
+	}
+
+	flagBatchFormat = "png"
+	flagBatchOutput = filepath.Join(tmpDir, "out")
+	flagBatchModel = "gpt-image-1"
+	flagBatchParallel = 1
+
+	cmd := &cobra.Command{}
+	if err := runBatch(cmd, []string{inputFile}, app); err != nil {
+		t.Fatalf("runBatch() error = %v", err)
+	}
+	if _, err := os.Stat(flagBatchOutput); err != nil {
+		t.Fatalf("expected output dir to exist: %v", err)
+	}
+}
+
+func TestRunBatch_InvalidFormat(t *testing.T) {
+	resetFlags()
+	out := &bytes.Buffer{}
+	app := newTestApp(out)
+	t.Setenv("OPENAI_API_KEY", "test-key")
+
+	tmpDir := t.TempDir()
+	inputFile := filepath.Join(tmpDir, "prompts.txt")
+	if err := os.WriteFile(inputFile, []byte("one\n"), 0644); err != nil {
+		t.Fatalf("write prompts: %v", err)
+	}
+
+	flagBatchFormat = "gif"
+	cmd := &cobra.Command{}
+	if err := runBatch(cmd, []string{inputFile}, app); err == nil {
+		t.Fatal("expected error for invalid format")
+	}
+}
+
+func TestRunBatch_ParseError(t *testing.T) {
+	resetFlags()
+	out := &bytes.Buffer{}
+	app := newTestApp(out)
+	t.Setenv("OPENAI_API_KEY", "test-key")
+
+	tmpDir := t.TempDir()
+	inputFile := filepath.Join(tmpDir, "prompts.json")
+	if err := os.WriteFile(inputFile, []byte("{invalid"), 0644); err != nil {
+		t.Fatalf("write prompts: %v", err)
+	}
+
+	flagBatchFormat = "png"
+	cmd := &cobra.Command{}
+	if err := runBatch(cmd, []string{inputFile}, app); err == nil {
+		t.Fatal("expected error for parse failure")
+	}
+}
+
+func TestRunBatch_OutputDirEmpty(t *testing.T) {
+	resetFlags()
+	out := &bytes.Buffer{}
+	app := newTestApp(out)
+	t.Setenv("OPENAI_API_KEY", "test-key")
+
+	tmpDir := t.TempDir()
+	inputFile := filepath.Join(tmpDir, "prompts.txt")
+	if err := os.WriteFile(inputFile, []byte("one\n"), 0644); err != nil {
+		t.Fatalf("write prompts: %v", err)
+	}
+
+	flagBatchFormat = "png"
+	flagBatchOutput = ""
+	cmd := &cobra.Command{}
+	if err := runBatch(cmd, []string{inputFile}, app); err != nil {
+		t.Fatalf("runBatch() error = %v", err)
+	}
+}
+
+func TestRunBatch_StopOnError(t *testing.T) {
+	resetFlags()
+	out := &bytes.Buffer{}
+	app := newTestApp(out)
+	t.Setenv("OPENAI_API_KEY", "test-key")
+
+	tmpDir := t.TempDir()
+	inputFile := filepath.Join(tmpDir, "prompts.txt")
+	if err := os.WriteFile(inputFile, []byte("one\ntwo\n"), 0644); err != nil {
+		t.Fatalf("write prompts: %v", err)
+	}
+
+	app.NewProvider = func(cfg *provider.Config, registry *models.ModelRegistry) (provider.Provider, error) {
+		call := 0
+		return &mockProvider{
+			generateFunc: func(ctx context.Context, req *models.Request) (*models.Response, error) {
+				call++
+				if call == 2 {
+					return nil, errors.New("boom")
+				}
+				return &models.Response{Images: []models.GeneratedImage{{Data: []byte("ok"), Index: 0}}}, nil
+			},
+		}, nil
+	}
+
+	flagBatchFormat = "png"
+	flagBatchOutput = filepath.Join(tmpDir, "out")
+	flagBatchModel = "gpt-image-1"
+	flagBatchParallel = 1
+	flagBatchStopOnError = true
+
+	cmd := &cobra.Command{}
+	if err := runBatch(cmd, []string{inputFile}, app); err == nil {
+		t.Fatal("expected error for generation failure")
+	}
+}
+
+func TestRunBatch_ProviderError(t *testing.T) {
+	resetFlags()
+	out := &bytes.Buffer{}
+	app := newTestApp(out)
+	t.Setenv("OPENAI_API_KEY", "test-key")
+
+	tmpDir := t.TempDir()
+	inputFile := filepath.Join(tmpDir, "prompts.txt")
+	if err := os.WriteFile(inputFile, []byte("one\n"), 0644); err != nil {
+		t.Fatalf("write prompts: %v", err)
+	}
+
+	app.NewProvider = func(cfg *provider.Config, registry *models.ModelRegistry) (provider.Provider, error) {
+		return nil, errors.New("provider fail")
+	}
+
+	flagBatchFormat = "png"
+	cmd := &cobra.Command{}
+	if err := runBatch(cmd, []string{inputFile}, app); err == nil {
+		t.Fatal("expected error for provider creation")
+	}
+}
+
+func TestRunBatch_LogsCost(t *testing.T) {
+	resetFlags()
+	out := &bytes.Buffer{}
+	app := newTestApp(out)
+	t.Setenv("OPENAI_API_KEY", "test-key")
+	t.Setenv("IMGGEN_CONFIG_DIR", t.TempDir())
+
+	tmpDir := t.TempDir()
+	inputFile := filepath.Join(tmpDir, "prompts.txt")
+	if err := os.WriteFile(inputFile, []byte("one\n"), 0644); err != nil {
+		t.Fatalf("write prompts: %v", err)
+	}
+
+	app.NewProvider = func(cfg *provider.Config, registry *models.ModelRegistry) (provider.Provider, error) {
+		return &mockProvider{
+			generateFunc: func(ctx context.Context, req *models.Request) (*models.Response, error) {
+				return &models.Response{
+					Images: []models.GeneratedImage{{Data: []byte("ok"), Index: 0}},
+					Cost:   &models.CostInfo{Total: 0.04, PerImage: 0.04, Currency: "USD"},
+				}, nil
+			},
+		}, nil
+	}
+
+	flagBatchFormat = "png"
+	flagBatchOutput = filepath.Join(tmpDir, "out")
+	flagBatchModel = "gpt-image-1"
+	flagBatchParallel = 1
+
+	cmd := &cobra.Command{}
+	if err := runBatch(cmd, []string{inputFile}, app); err != nil {
+		t.Fatalf("runBatch() error = %v", err)
+	}
+}
+
+func TestRunBatch_OutputDirCreateError(t *testing.T) {
+	resetFlags()
+	out := &bytes.Buffer{}
+	app := newTestApp(out)
+	t.Setenv("OPENAI_API_KEY", "test-key")
+
+	tmpDir := t.TempDir()
+	inputFile := filepath.Join(tmpDir, "prompts.txt")
+	if err := os.WriteFile(inputFile, []byte("one\n"), 0644); err != nil {
+		t.Fatalf("write prompts: %v", err)
+	}
+
+	if err := os.Chmod(tmpDir, 0500); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	defer os.Chmod(tmpDir, 0700)
+
+	flagBatchFormat = "png"
+	flagBatchOutput = filepath.Join(tmpDir, "out")
+	cmd := &cobra.Command{}
+	if err := runBatch(cmd, []string{inputFile}, app); err == nil {
+		t.Fatal("expected error for output dir create failure")
+	}
+}
+
+func TestRunBatch_OutputDirMissing_Abort(t *testing.T) {
+	resetFlags()
+	out := &bytes.Buffer{}
+	app := newTestApp(out)
+	t.Setenv("OPENAI_API_KEY", "test-key")
+
+	tmpDir := t.TempDir()
+	inputFile := filepath.Join(tmpDir, "prompts.txt")
+	if err := os.WriteFile(inputFile, []byte("one\n"), 0644); err != nil {
+		t.Fatalf("write prompts: %v", err)
+	}
+
+	restoreTerm := setTerminal(t, true)
+	defer restoreTerm()
+	restoreStdin := setStdin(t, "n\n")
+	defer restoreStdin()
+
+	flagBatchFormat = "png"
+	flagBatchOutput = filepath.Join(tmpDir, "out")
+	cmd := &cobra.Command{}
+	if err := runBatch(cmd, []string{inputFile}, app); err != nil {
+		t.Fatalf("runBatch() error = %v", err)
+	}
+}
+
+func TestRunBatch_OutputDirMissing_Confirm(t *testing.T) {
+	resetFlags()
+	out := &bytes.Buffer{}
+	app := newTestApp(out)
+	t.Setenv("OPENAI_API_KEY", "test-key")
+
+	tmpDir := t.TempDir()
+	inputFile := filepath.Join(tmpDir, "prompts.txt")
+	if err := os.WriteFile(inputFile, []byte("one\n"), 0644); err != nil {
+		t.Fatalf("write prompts: %v", err)
+	}
+
+	restoreTerm := setTerminal(t, true)
+	defer restoreTerm()
+	restoreStdin := setStdin(t, "y\n")
+	defer restoreStdin()
+
+	missingDir := filepath.Join(tmpDir, "out")
+	flagBatchFormat = "png"
+	flagBatchOutput = missingDir
+	cmd := &cobra.Command{}
+	if err := runBatch(cmd, []string{inputFile}, app); err != nil {
+		t.Fatalf("runBatch() error = %v", err)
+	}
+	if _, err := os.Stat(missingDir); err != nil {
+		t.Fatalf("expected output dir to exist: %v", err)
+	}
+}
+
+func TestRunOCR_SuggestSchema(t *testing.T) {
+	resetFlags()
+	out := &bytes.Buffer{}
+	app := newTestApp(out)
+	t.Setenv("OPENAI_API_KEY", "test-key")
+
+	tmpDir := t.TempDir()
+	imagePath := filepath.Join(tmpDir, "image.png")
+	if err := os.WriteFile(imagePath, []byte{0x89, 0x50, 0x4E, 0x47}, 0644); err != nil {
+		t.Fatalf("write image: %v", err)
+	}
+
+	app.NewProvider = func(cfg *provider.Config, registry *models.ModelRegistry) (provider.Provider, error) {
+		return &mockOCRProvider{
+			suggestFunc: func(ctx context.Context, req *models.OCRRequest) (json.RawMessage, error) {
+				return json.RawMessage(`{"type":"object","properties":{"name":{"type":"string"}}}`), nil
+			},
+		}, nil
+	}
+
+	flagOCRModel = "gpt-5-mini"
+	flagOCRSuggestSchema = true
+	flagOCROutput = filepath.Join(tmpDir, "schema.json")
+
+	cmd := &cobra.Command{}
+	if err := runOCR(cmd, []string{imagePath}, app); err != nil {
+		t.Fatalf("runOCR() error = %v", err)
+	}
+	if _, err := os.Stat(flagOCROutput); err != nil {
+		t.Fatalf("expected schema file to exist: %v", err)
+	}
+}
+
+func TestRunOCR_TextOutputFile(t *testing.T) {
+	resetFlags()
+	out := &bytes.Buffer{}
+	app := newTestApp(out)
+	t.Setenv("OPENAI_API_KEY", "test-key")
+
+	tmpDir := t.TempDir()
+	imagePath := filepath.Join(tmpDir, "image.png")
+	if err := os.WriteFile(imagePath, []byte{0x89, 0x50, 0x4E, 0x47}, 0644); err != nil {
+		t.Fatalf("write image: %v", err)
+	}
+
+	app.NewProvider = func(cfg *provider.Config, registry *models.ModelRegistry) (provider.Provider, error) {
+		return &mockOCRProvider{
+			ocrFunc: func(ctx context.Context, req *models.OCRRequest) (*models.OCRResponse, error) {
+				return &models.OCRResponse{Text: "hello"}, nil
+			},
+		}, nil
+	}
+
+	flagOCRModel = "gpt-5-mini"
+	flagOCRSuggestSchema = false
+	flagOCROutput = filepath.Join(tmpDir, "out.txt")
+
+	cmd := &cobra.Command{}
+	if err := runOCR(cmd, []string{imagePath}, app); err != nil {
+		t.Fatalf("runOCR() error = %v", err)
+	}
+	if data, err := os.ReadFile(flagOCROutput); err != nil || string(data) != "hello" {
+		t.Fatalf("unexpected output: %v, %s", err, string(data))
+	}
+}
+
+func TestRunOCR_WithSchemaFile(t *testing.T) {
+	resetFlags()
+	out := &bytes.Buffer{}
+	app := newTestApp(out)
+	t.Setenv("OPENAI_API_KEY", "test-key")
+
+	tmpDir := t.TempDir()
+	imagePath := filepath.Join(tmpDir, "image.png")
+	if err := os.WriteFile(imagePath, []byte{0x89, 0x50, 0x4E, 0x47}, 0644); err != nil {
+		t.Fatalf("write image: %v", err)
+	}
+	schemaPath := filepath.Join(tmpDir, "schema.json")
+	if err := os.WriteFile(schemaPath, []byte(`{"type":"object"}`), 0644); err != nil {
+		t.Fatalf("write schema: %v", err)
+	}
+
+	app.NewProvider = func(cfg *provider.Config, registry *models.ModelRegistry) (provider.Provider, error) {
+		return &mockOCRProvider{
+			ocrFunc: func(ctx context.Context, req *models.OCRRequest) (*models.OCRResponse, error) {
+				return &models.OCRResponse{Structured: json.RawMessage(`{"name":"test"}`)}, nil
+			},
+		}, nil
+	}
+
+	flagOCRModel = "gpt-5-mini"
+	flagOCRSchema = schemaPath
+	flagOCRSchemaName = "test"
+	flagOCRSuggestSchema = false
+	flagOCROutput = ""
+
+	cmd := &cobra.Command{}
+	if err := runOCR(cmd, []string{imagePath}, app); err != nil {
+		t.Fatalf("runOCR() error = %v", err)
+	}
+}
+
+func TestRunOCR_WithCost(t *testing.T) {
+	resetFlags()
+	out := &bytes.Buffer{}
+	app := newTestApp(out)
+	t.Setenv("OPENAI_API_KEY", "test-key")
+	t.Setenv("IMGGEN_CONFIG_DIR", t.TempDir())
+
+	tmpDir := t.TempDir()
+	imagePath := filepath.Join(tmpDir, "image.png")
+	if err := os.WriteFile(imagePath, []byte{0x89, 0x50, 0x4E, 0x47}, 0644); err != nil {
+		t.Fatalf("write image: %v", err)
+	}
+
+	app.NewProvider = func(cfg *provider.Config, registry *models.ModelRegistry) (provider.Provider, error) {
+		return &mockOCRProvider{
+			ocrFunc: func(ctx context.Context, req *models.OCRRequest) (*models.OCRResponse, error) {
+				return &models.OCRResponse{
+					Text:         "hello",
+					InputTokens:  10,
+					OutputTokens: 20,
+					Cost:         &models.CostInfo{Total: 0.01, Currency: "USD"},
+				}, nil
+			},
+		}, nil
+	}
+
+	flagOCRModel = "gpt-5-mini"
+	flagOCRSuggestSchema = false
+	flagOCROutput = ""
+
+	cmd := &cobra.Command{}
+	if err := runOCR(cmd, []string{imagePath}, app); err != nil {
+		t.Fatalf("runOCR() error = %v", err)
+	}
+}
+
+func TestRunOCR_WithURL(t *testing.T) {
+	resetFlags()
+	out := &bytes.Buffer{}
+	app := newTestApp(out)
+	t.Setenv("OPENAI_API_KEY", "test-key")
+
+	app.NewProvider = func(cfg *provider.Config, registry *models.ModelRegistry) (provider.Provider, error) {
+		return &mockOCRProvider{
+			ocrFunc: func(ctx context.Context, req *models.OCRRequest) (*models.OCRResponse, error) {
+				if req.ImageURL == "" {
+					t.Fatal("expected image URL")
+				}
+				return &models.OCRResponse{Text: "ok"}, nil
+			},
+		}, nil
+	}
+
+	flagOCRModel = "gpt-5-mini"
+	flagOCRURL = "https://example.com/image.png"
+	flagOCRSuggestSchema = false
+	flagOCROutput = ""
+
+	cmd := &cobra.Command{}
+	if err := runOCR(cmd, []string{}, app); err != nil {
+		t.Fatalf("runOCR() error = %v", err)
+	}
+}
+
+func TestRunOCR_ProviderNoOCR(t *testing.T) {
+	resetFlags()
+	out := &bytes.Buffer{}
+	app := newTestApp(out)
+	t.Setenv("OPENAI_API_KEY", "test-key")
+
+	tmpDir := t.TempDir()
+	imagePath := filepath.Join(tmpDir, "image.png")
+	if err := os.WriteFile(imagePath, []byte{0x89, 0x50, 0x4E, 0x47}, 0644); err != nil {
+		t.Fatalf("write image: %v", err)
+	}
+
+	cmd := &cobra.Command{}
+	if err := runOCR(cmd, []string{imagePath}, app); err == nil {
+		t.Fatal("expected error for provider without OCR")
+	}
+}
+
+func TestRunOCR_ImageNotFound(t *testing.T) {
+	resetFlags()
+	out := &bytes.Buffer{}
+	app := newTestApp(out)
+	t.Setenv("OPENAI_API_KEY", "test-key")
+
+	cmd := &cobra.Command{}
+	if err := runOCR(cmd, []string{"/nonexistent/image.png"}, app); err == nil {
+		t.Fatal("expected error for missing image")
+	}
+}
+
+func TestRunInteractive_Quit(t *testing.T) {
+	resetFlags()
+	out := &bytes.Buffer{}
+	app := newTestApp(out)
+	t.Setenv("OPENAI_API_KEY", "test-key")
+	t.Setenv("IMGGEN_CONFIG_DIR", t.TempDir())
+
+	restore := setStdin(t, "quit\n")
+	defer restore()
+
+	if err := runInteractive(&cobra.Command{}, app); err != nil {
+		t.Fatalf("runInteractive() error = %v", err)
+	}
+}
+
+func TestRunKeysListSetDelete(t *testing.T) {
+	resetFlags()
+	out := &bytes.Buffer{}
+	app := newTestApp(out)
+
+	tmpDir := t.TempDir()
+	t.Setenv("IMGGEN_CONFIG_DIR", tmpDir)
+	t.Setenv("OPENAI_API_KEY", "env-key")
+
+	if err := runKeysList(app); err != nil {
+		t.Fatalf("runKeysList() error = %v", err)
+	}
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	_, _ = w.WriteString("\n")
+	w.Close()
+	origStdin := os.Stdin
+	os.Stdin = r
+	defer func() { os.Stdin = origStdin }()
+
+	if err := runKeysSet(app); err != nil {
+		t.Fatalf("runKeysSet() error = %v", err)
+	}
+
+	out.Reset()
+	if err := runKeysList(app); err != nil {
+		t.Fatalf("runKeysList() error = %v", err)
+	}
+
+	r2, w2, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	_, _ = w2.WriteString("y\n")
+	w2.Close()
+	os.Stdin = r2
+
+	if err := runKeysDelete(app); err != nil {
+		t.Fatalf("runKeysDelete() error = %v", err)
+	}
+}
+
+func TestRunKeysSet_ExistingKeyCancel(t *testing.T) {
+	resetFlags()
+	out := &bytes.Buffer{}
+	app := newTestApp(out)
+
+	tmpDir := t.TempDir()
+	t.Setenv("IMGGEN_CONFIG_DIR", tmpDir)
+
+	store, err := keys.NewStore()
+	if err != nil {
+		t.Fatalf("store: %v", err)
+	}
+	if err := store.Set("openai", "existing"); err != nil {
+		t.Fatalf("set key: %v", err)
+	}
+
+	restore := setStdin(t, "n\n")
+	defer restore()
+
+	if err := runKeysSet(app); err != nil {
+		t.Fatalf("runKeysSet() error = %v", err)
+	}
+}
+
+func TestRunKeysSet_NoKeyProvided(t *testing.T) {
+	resetFlags()
+	out := &bytes.Buffer{}
+	app := newTestApp(out)
+
+	tmpDir := t.TempDir()
+	t.Setenv("IMGGEN_CONFIG_DIR", tmpDir)
+	t.Setenv("OPENAI_API_KEY", "")
+
+	restore := setStdin(t, "\n")
+	defer restore()
+
+	if err := runKeysSet(app); err == nil {
+		t.Fatal("expected error for empty key")
+	}
+}
+
+func TestRunKeysDelete_NoKey(t *testing.T) {
+	resetFlags()
+	out := &bytes.Buffer{}
+	app := newTestApp(out)
+
+	tmpDir := t.TempDir()
+	t.Setenv("IMGGEN_CONFIG_DIR", tmpDir)
+
+	if err := runKeysDelete(app); err != nil {
+		t.Fatalf("runKeysDelete() error = %v", err)
+	}
+}
+
+func TestRunKeysDelete_Cancel(t *testing.T) {
+	resetFlags()
+	out := &bytes.Buffer{}
+	app := newTestApp(out)
+
+	tmpDir := t.TempDir()
+	t.Setenv("IMGGEN_CONFIG_DIR", tmpDir)
+
+	store, err := keys.NewStore()
+	if err != nil {
+		t.Fatalf("store: %v", err)
+	}
+	if err := store.Set("openai", "existing"); err != nil {
+		t.Fatalf("set key: %v", err)
+	}
+
+	restore := setStdin(t, "n\n")
+	defer restore()
+
+	if err := runKeysDelete(app); err != nil {
+		t.Fatalf("runKeysDelete() error = %v", err)
+	}
+}
+
+func TestRunRegisterStatusAndBackups(t *testing.T) {
+	resetFlags()
+	out := &bytes.Buffer{}
+	app := newTestApp(out)
+
+	if err := runRegisterStatus(app); err != nil {
+		t.Fatalf("runRegisterStatus() error = %v", err)
+	}
+
+	if err := runListBackups(app, "codex"); err != nil {
+		t.Fatalf("runListBackups() error = %v", err)
+	}
+}
+
+func TestRunListBackups_WithBackup(t *testing.T) {
+	resetFlags()
+	out := &bytes.Buffer{}
+	app := newTestApp(out)
+
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+
+	backupDir := filepath.Join(tmpHome, ".codex")
+	if err := os.MkdirAll(backupDir, 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	backupPath := filepath.Join(backupDir, "AGENTS.md.backup-20250101-010101")
+	if err := os.WriteFile(backupPath, []byte("backup"), 0644); err != nil {
+		t.Fatalf("write backup: %v", err)
+	}
+
+	if err := runListBackups(app, "codex"); err != nil {
+		t.Fatalf("runListBackups() error = %v", err)
+	}
+}
+
+func TestRunUnregister_NotRegistered(t *testing.T) {
+	resetFlags()
+	out := &bytes.Buffer{}
+	app := newTestApp(out)
+	t.Setenv("HOME", t.TempDir())
+
+	if err := runUnregister(app, []string{"codex"}); err != nil {
+		t.Fatalf("runUnregister() error = %v", err)
+	}
+}
+
+func TestRunKeysPath(t *testing.T) {
+	resetFlags()
+	out := &bytes.Buffer{}
+	app := newTestApp(out)
+	t.Setenv("IMGGEN_CONFIG_DIR", t.TempDir())
+	if err := runKeysPath(app); err != nil {
+		t.Fatalf("runKeysPath() error = %v", err)
+	}
+}
+
+func TestCountSuccessful(t *testing.T) {
+	results := []batch.Result{
+		{Error: nil},
+		{Error: errors.New("fail")},
+		{Error: nil},
+	}
+	if got := countSuccessful(results); got != 2 {
+		t.Fatalf("countSuccessful() = %d, want 2", got)
+	}
+}
+
+func setStdin(t *testing.T, input string) func() {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	_, _ = w.WriteString(input)
+	w.Close()
+	orig := os.Stdin
+	os.Stdin = r
+	return func() {
+		os.Stdin = orig
+	}
+}
+
+func setTerminal(t *testing.T, value bool) func() {
+	t.Helper()
+	orig := isTerminalFunc
+	isTerminalFunc = func(_ int) bool { return value }
+	return func() {
+		isTerminalFunc = orig
 	}
 }
 

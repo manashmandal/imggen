@@ -1016,8 +1016,10 @@ func parseParamPairs(params []string) (map[string]string, error) {
 }
 
 func isTerminal() bool {
-	return term.IsTerminal(int(os.Stdin.Fd()))
+	return isTerminalFunc(int(os.Stdin.Fd()))
 }
+
+var isTerminalFunc = term.IsTerminal
 
 func countSuccessful(results []batch.Result) int {
 	count := 0
