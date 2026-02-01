@@ -389,11 +389,18 @@ func TestParseFile(t *testing.T) {
 			wantErr:  false,
 		},
 		{
-			name:     "unsupported extension",
+			name:     "yaml file",
 			filename: "test.yaml",
-			content:  "prompt: test",
-			want:     0,
-			wantErr:  true,
+			content:  "- prompt: one\n- prompt: two",
+			want:     2,
+			wantErr:  false,
+		},
+		{
+			name:     "yaml wrapper",
+			filename: "test.yaml",
+			content:  "items:\n  - prompt: one\n  - prompt: two",
+			want:     2,
+			wantErr:  false,
 		},
 		{
 			name:     "no extension treated as txt",
@@ -428,6 +435,20 @@ func TestParseFile_NotFound(t *testing.T) {
 	_, err := ParseFile("/nonexistent/file.txt")
 	if err == nil {
 		t.Error("ParseFile() expected error for non-existent file")
+	}
+}
+
+func TestParseYAML_Invalid(t *testing.T) {
+	_, err := ParseYAML(strings.NewReader("prompt: ["))
+	if err == nil {
+		t.Fatal("ParseYAML() expected error for invalid YAML")
+	}
+}
+
+func TestParseYAML_Empty(t *testing.T) {
+	_, err := ParseYAML(strings.NewReader(""))
+	if err == nil {
+		t.Fatal("ParseYAML() expected error for empty content")
 	}
 }
 
@@ -525,6 +546,62 @@ func TestProcessorWithErrors(t *testing.T) {
 			t.Error("Expected error when StopOnError is true")
 		}
 	})
+}
+
+func TestProcessor_PassesReferencesAndCount(t *testing.T) {
+	out := &bytes.Buffer{}
+	errOut := &bytes.Buffer{}
+	var gotReq *models.Request
+
+	proc := NewProcessor(
+		&mockProvider{
+			generateFunc: func(_ context.Context, req *models.Request) (*models.Response, error) {
+				gotReq = req
+				return &models.Response{
+					Images: []models.GeneratedImage{{Data: []byte("test image data"), Index: 0}},
+					Cost:   &models.CostInfo{PerImage: 0.04, Total: 0.04},
+				}, nil
+			},
+		},
+		image.NewSaver(),
+		models.DefaultRegistry(),
+		out,
+		errOut,
+	)
+
+	items := []Item{
+		{
+			Index:       1,
+			Prompt:      "test",
+			Count:       2,
+			References:  []models.ReferenceImage{{Path: "/tmp/ref.png"}},
+			Consistency: &models.Consistency{Mode: "identity", Strength: 0.8},
+		},
+	}
+
+	opts := &Options{
+		OutputDir:    t.TempDir(),
+		DefaultModel: "gpt-image-1",
+		Format:       models.FormatPNG,
+		Parallel:     1,
+	}
+
+	_, err := proc.Process(context.Background(), items, opts)
+	if err != nil {
+		t.Fatalf("Process() error = %v", err)
+	}
+	if gotReq == nil {
+		t.Fatal("expected request to be captured")
+	}
+	if gotReq.Count != 2 {
+		t.Fatalf("Count = %d, want 2", gotReq.Count)
+	}
+	if len(gotReq.References) != 1 {
+		t.Fatalf("References = %d, want 1", len(gotReq.References))
+	}
+	if gotReq.Consistency == nil || gotReq.Consistency.Mode != "identity" {
+		t.Fatalf("Consistency not passed correctly")
+	}
 }
 
 func TestProcessorWithDelay(t *testing.T) {

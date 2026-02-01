@@ -34,12 +34,31 @@ func (p *Provider) Edit(ctx context.Context, req *models.EditRequest) (*models.R
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
 
-	imagePart, err := createFormFileWithContentType(writer, "image", "image.png", "image/png")
-	if err != nil {
-		return nil, fmt.Errorf("failed to create image part: %w", err)
+	images := req.Images
+	mimeTypes := req.ImageMimeTypes
+	if len(images) == 0 && len(req.Image) > 0 {
+		images = [][]byte{req.Image}
 	}
-	if _, err := imagePart.Write(req.Image); err != nil {
-		return nil, fmt.Errorf("failed to write image: %w", err)
+	if len(mimeTypes) < len(images) {
+		mimeTypes = append(mimeTypes, make([]string, len(images)-len(mimeTypes))...)
+	}
+
+	for i, img := range images {
+		fieldName := "image"
+		if len(images) > 1 {
+			fieldName = "image[]"
+		}
+		contentType := mimeTypes[i]
+		if contentType == "" {
+			contentType = detectMimeType(img)
+		}
+		imagePart, err := createFormFileWithContentType(writer, fieldName, fmt.Sprintf("image-%d.png", i+1), contentType)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create image part: %w", err)
+		}
+		if _, err := imagePart.Write(img); err != nil {
+			return nil, fmt.Errorf("failed to write image: %w", err)
+		}
 	}
 
 	if len(req.Mask) > 0 {
@@ -69,6 +88,24 @@ func (p *Provider) Edit(ctx context.Context, req *models.EditRequest) (*models.R
 	if req.Count > 0 {
 		if err := writer.WriteField("n", fmt.Sprintf("%d", req.Count)); err != nil {
 			return nil, fmt.Errorf("failed to write count: %w", err)
+		}
+	}
+
+	if req.Quality != "" {
+		if err := writer.WriteField("quality", req.Quality); err != nil {
+			return nil, fmt.Errorf("failed to write quality: %w", err)
+		}
+	}
+
+	if req.Background != "" {
+		if err := writer.WriteField("background", req.Background); err != nil {
+			return nil, fmt.Errorf("failed to write background: %w", err)
+		}
+	}
+
+	if req.InputFidelity != "" {
+		if err := writer.WriteField("input_fidelity", req.InputFidelity); err != nil {
+			return nil, fmt.Errorf("failed to write input_fidelity: %w", err)
 		}
 	}
 
@@ -129,9 +166,9 @@ func (p *Provider) Edit(ctx context.Context, req *models.EditRequest) (*models.R
 	}
 
 	// Edit operations use medium quality for gpt-image-1, no quality for dall-e-2
-	quality := ""
-	if req.Model == "gpt-image-1" {
-		quality = "medium"
+	quality := req.Quality
+	if req.Model == "gpt-image-1" && quality == "" {
+		quality = "auto"
 	}
 	response.Cost = p.costCalc.Calculate(models.ProviderOpenAI, req.Model, req.Size, quality, len(response.Images))
 	return response, nil

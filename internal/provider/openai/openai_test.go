@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -189,6 +190,69 @@ func TestProvider_Generate_Success(t *testing.T) {
 	}
 	if string(resp.Images[0].Data) != "fake image data" {
 		t.Errorf("Generate() image data mismatch")
+	}
+}
+
+func TestProvider_Generate_WithReferences_UsesEditEndpoint(t *testing.T) {
+	imageData := []byte{0x89, 0x50, 0x4E, 0x47, 0x0D}
+	tmpFile, err := os.CreateTemp("", "ref-*.png")
+	if err != nil {
+		t.Fatalf("CreateTemp() error = %v", err)
+	}
+	defer os.Remove(tmpFile.Name())
+	if _, err := tmpFile.Write(imageData); err != nil {
+		t.Fatalf("Write() error = %v", err)
+	}
+	if err := tmpFile.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/images/edits" {
+			t.Fatalf("expected /images/edits, got %s", r.URL.Path)
+		}
+		encoded := base64.StdEncoding.EncodeToString([]byte("test image data"))
+		resp := fmt.Sprintf(`{"created": 123, "data": [{"b64_json": "%s"}]}`, encoded)
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(resp))
+	}))
+	defer server.Close()
+
+	p, _ := New(&provider.Config{APIKey: "test", BaseURL: server.URL}, models.DefaultRegistry())
+	req := models.NewRequest("test prompt")
+	req.Model = "gpt-image-1"
+	req.References = []models.ReferenceImage{{Path: tmpFile.Name()}}
+
+	resp, err := p.Generate(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+	if len(resp.Images) != 1 {
+		t.Errorf("Generate() returned %d images, want 1", len(resp.Images))
+	}
+}
+
+func TestProvider_Generate_WithReferences_DallE2Multiple(t *testing.T) {
+	p, _ := New(&provider.Config{APIKey: "test", BaseURL: "http://example.com"}, models.DefaultRegistry())
+	req := models.NewRequest("test")
+	req.Model = "dall-e-2"
+	req.References = []models.ReferenceImage{{Path: "/tmp/a.png"}, {Path: "/tmp/b.png"}}
+
+	_, err := p.Generate(context.Background(), req)
+	if err == nil {
+		t.Fatal("expected error for multiple refs on dall-e-2")
+	}
+}
+
+func TestProvider_Generate_WithReferences_UnsupportedModel(t *testing.T) {
+	p, _ := New(&provider.Config{APIKey: "test", BaseURL: "http://example.com"}, models.DefaultRegistry())
+	req := models.NewRequest("test")
+	req.Model = "dall-e-3"
+	req.References = []models.ReferenceImage{{Path: "/tmp/a.png"}}
+
+	_, err := p.Generate(context.Background(), req)
+	if err == nil {
+		t.Fatal("expected error for model without edit support")
 	}
 }
 
@@ -1294,6 +1358,80 @@ func TestProvider_Edit_WithAllOptions(t *testing.T) {
 	_, err := p.Edit(context.Background(), req)
 	if err != nil {
 		t.Fatalf("Edit() with all options error = %v", err)
+	}
+}
+
+func TestProvider_Edit_MultipleImagesFields(t *testing.T) {
+	imageData := []byte{0x89, 0x50, 0x4E, 0x47, 0x0D}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseMultipartForm(10 << 20); err != nil {
+			t.Fatalf("ParseMultipartForm() error = %v", err)
+		}
+		if r.MultipartForm == nil {
+			t.Fatal("expected multipart form")
+		}
+		if r.MultipartForm.Value["quality"][0] != "high" {
+			t.Fatalf("quality = %v, want high", r.MultipartForm.Value["quality"])
+		}
+		if r.MultipartForm.Value["background"][0] != "transparent" {
+			t.Fatalf("background = %v, want transparent", r.MultipartForm.Value["background"])
+		}
+		if r.MultipartForm.Value["input_fidelity"][0] != "high" {
+			t.Fatalf("input_fidelity = %v, want high", r.MultipartForm.Value["input_fidelity"])
+		}
+		files := r.MultipartForm.File["image[]"]
+		if len(files) != 2 {
+			t.Fatalf("expected 2 image[] files, got %d", len(files))
+		}
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"created":123,"data":[{"b64_json":"dGVzdA=="}]}`))
+	}))
+	defer server.Close()
+
+	p, _ := New(&provider.Config{APIKey: "test", BaseURL: server.URL}, models.DefaultRegistry())
+	req := &models.EditRequest{
+		Images:         [][]byte{imageData, imageData},
+		Prompt:         "test",
+		Model:          "gpt-image-1",
+		Quality:        "high",
+		Background:     "transparent",
+		InputFidelity:  "high",
+		ImageMimeTypes: []string{"image/png", "image/png"},
+	}
+
+	if _, err := p.Edit(context.Background(), req); err != nil {
+		t.Fatalf("Edit() error = %v", err)
+	}
+}
+
+func TestProvider_Edit_SingleImageFieldName(t *testing.T) {
+	imageData := []byte{0x89, 0x50, 0x4E, 0x47, 0x0D}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseMultipartForm(10 << 20); err != nil {
+			t.Fatalf("ParseMultipartForm() error = %v", err)
+		}
+		if r.MultipartForm == nil {
+			t.Fatal("expected multipart form")
+		}
+		if len(r.MultipartForm.File["image"]) != 1 {
+			t.Fatalf("expected image field, got %v", r.MultipartForm.File)
+		}
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"created":123,"data":[{"b64_json":"dGVzdA=="}]}`))
+	}))
+	defer server.Close()
+
+	p, _ := New(&provider.Config{APIKey: "test", BaseURL: server.URL}, models.DefaultRegistry())
+	req := &models.EditRequest{
+		Image:  imageData,
+		Prompt: "test",
+		Model:  "gpt-image-1",
+	}
+
+	if _, err := p.Edit(context.Background(), req); err != nil {
+		t.Fatalf("Edit() error = %v", err)
 	}
 }
 

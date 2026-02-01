@@ -1,0 +1,66 @@
+workflow:
+  name: "branding-pack"
+  params:
+    brand_logo: "./docs/examples/branding/base_logo.png"
+  steps:
+    - id: logo_variants
+      prompt: "create 3 logo variants: invert colors, outline version, and a simplified icon mark"
+      count: 3
+      references:
+        - path: "${brand_logo}"
+          prompt: "preserve the fox head silhouette and overall geometry"
+          weight: 1.0
+      consistency:
+        mode: identity
+        strength: 0.85
+      outputs:
+        pattern: "logo_variant_{i}.png"
+
+    - id: social_avatar
+      prompt: "create a circular social avatar using the logo mark, centered, with a subtle gradient background"
+      references:
+        - path: "${brand_logo}"
+          prompt: "use the logo mark as the centerpiece"
+          weight: 1.0
+      consistency:
+        mode: identity
+        strength: 0.75
+      outputs:
+        pattern: "avatar.png"
+
+    - id: business_card
+      prompt: "minimal business card front design, white background, logo top-left, placeholder text for name and title"
+      references:
+        - path: "${brand_logo}"
+          prompt: "keep logo design consistent"
+          weight: 1.0
+      consistency:
+        mode: identity
+        strength: 0.7
+      outputs:
+        pattern: "business_card_front.png"
+
+    - id: letterhead
+      prompt: "clean letterhead layout with logo header, subtle watermark logo in the footer"
+      references:
+        - path: "${brand_logo}"
+          prompt: "use logo as brand anchor"
+          weight: 1.0
+      consistency:
+        mode: identity
+        strength: 0.7
+      outputs:
+        pattern: "letterhead.png"
+
+    - id: sticker_pack
+      prompt: "create 3 sticker-style variants of the logo with playful outlines"
+      count: 3
+      references:
+        - path: "${brand_logo}"
+          prompt: "preserve the fox head silhouette"
+          weight: 1.0
+      consistency:
+        mode: hybrid
+        strength: 0.6
+      outputs:
+        pattern: "sticker_{i}.png"

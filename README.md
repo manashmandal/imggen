@@ -54,6 +54,9 @@ imggen "a sunset over mountains"
 imggen -m dall-e-3 -s 1792x1024 -q hd "panoramic cityscape"
 imggen -m gpt-image-1 -n 3 --transparent "logo design"
 
+# With reference images (identity consistency)
+imggen --ref ./refs/character.png --ref-prompt "keep the same character identity" "new pose running"
+
 # Multiple prompts (generates images concurrently)
 imggen --prompt "a sunset" --prompt "a cat" --prompt "a dog" -o ./output
 imggen -P "sunset" -P "mountains" -p 3 -o ./images  # -p 3 = 3 parallel workers
@@ -155,6 +158,15 @@ abstract geometric art
 ]
 ```
 
+**YAML file (.yaml/.yml)** - Array of prompt objects, optionally with references:
+```yaml
+- prompt: "change the background to a forest at dusk"
+  references:
+    - path: "./refs/character.png"
+      prompt: "preserve identity and costume"
+      weight: 1.0
+```
+
 ### Batch Flags
 
 | Flag | Short | Description | Default |
@@ -196,6 +208,38 @@ imggen ocr complex-document.png -m gpt-5.2
 
 # Custom extraction prompt
 imggen ocr business-card.jpg -p "Extract the name, title, email, and phone number"
+```
+
+## Workflow Pipelines
+
+Run multi-step YAML workflows with dependencies and parameter substitution:
+
+```bash
+imggen workflow pipeline.yaml -o ./output --param character_ref=./refs/hero.png
+```
+
+## More Docs
+
+See `docs/README.md` for extended documentation, including reference images, workflows, and LLM quickstart.
+
+Example workflow:
+```yaml
+workflow:
+  name: "sprite-pack"
+  params:
+    character_ref: "./refs/hero.png"
+  steps:
+    - id: base
+      prompt: "full body 2D character, neutral pose"
+      references:
+        - path: "${character_ref}"
+          prompt: "preserve identity and costume"
+          weight: 1.0
+    - id: run_poses
+      depends_on: [base]
+      prompt: "same character, running pose variations"
+      outputs:
+        pattern: "run_{i}.png"
 ```
 
 ### Structured Output
