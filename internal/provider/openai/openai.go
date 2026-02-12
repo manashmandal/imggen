@@ -217,7 +217,7 @@ func (p *Provider) buildAPIRequest(req *models.Request) *apiRequest {
 	}
 
 	switch req.Model {
-	case "gpt-image-1":
+	case "gpt-image-1.5", "gpt-image-1":
 		if req.Format != "" {
 			apiReq.OutputFormat = req.Format.String()
 		}

@@ -10,6 +10,27 @@ type PricingKey struct {
 }
 
 var openAIPricing = map[PricingKey]float64{
+	// gpt-image-1.5 pricing (20% cheaper than gpt-image-1)
+	{Model: "gpt-image-1.5", Size: "1024x1024", Quality: "low"}:    0.009,
+	{Model: "gpt-image-1.5", Size: "1024x1024", Quality: "medium"}: 0.034,
+	{Model: "gpt-image-1.5", Size: "1024x1024", Quality: "high"}:   0.134,
+	{Model: "gpt-image-1.5", Size: "1024x1024", Quality: "auto"}:   0.034,
+
+	{Model: "gpt-image-1.5", Size: "1536x1024", Quality: "low"}:    0.013,
+	{Model: "gpt-image-1.5", Size: "1536x1024", Quality: "medium"}: 0.050,
+	{Model: "gpt-image-1.5", Size: "1536x1024", Quality: "high"}:   0.200,
+	{Model: "gpt-image-1.5", Size: "1536x1024", Quality: "auto"}:   0.050,
+
+	{Model: "gpt-image-1.5", Size: "1024x1536", Quality: "low"}:    0.013,
+	{Model: "gpt-image-1.5", Size: "1024x1536", Quality: "medium"}: 0.050,
+	{Model: "gpt-image-1.5", Size: "1024x1536", Quality: "high"}:   0.200,
+	{Model: "gpt-image-1.5", Size: "1024x1536", Quality: "auto"}:   0.050,
+
+	{Model: "gpt-image-1.5", Size: "auto", Quality: "low"}:    0.009,
+	{Model: "gpt-image-1.5", Size: "auto", Quality: "medium"}: 0.034,
+	{Model: "gpt-image-1.5", Size: "auto", Quality: "high"}:   0.134,
+	{Model: "gpt-image-1.5", Size: "auto", Quality: "auto"}:   0.034,
+
 	// gpt-image-1 pricing
 	{Model: "gpt-image-1", Size: "1024x1024", Quality: "low"}:    0.011,
 	{Model: "gpt-image-1", Size: "1024x1024", Quality: "medium"}: 0.042,

@@ -27,7 +27,7 @@ type Manager struct {
 
 func NewManager(store *Store, defaultModel string) *Manager {
 	if defaultModel == "" {
-		defaultModel = "gpt-image-1"
+		defaultModel = "gpt-image-1.5"
 	}
 	return &Manager{
 		store:        store,
