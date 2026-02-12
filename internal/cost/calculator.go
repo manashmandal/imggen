@@ -47,6 +47,8 @@ func (c *Calculator) calculateOpenAI(model, size, quality string) float64 {
 
 	// Default fallback prices
 	switch model {
+	case "gpt-image-1.5":
+		return 0.034 // medium quality default
 	case "gpt-image-1":
 		return 0.042 // medium quality default
 	case "dall-e-3":

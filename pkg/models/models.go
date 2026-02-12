@@ -445,6 +445,19 @@ func DefaultRegistry() *ModelRegistry {
 	r := NewModelRegistry()
 
 	r.Register(&ModelCapabilities{
+		Name:                 "gpt-image-1.5",
+		Provider:             ProviderOpenAI,
+		SupportedSizes:       []string{"1024x1024", "1536x1024", "1024x1536", "auto"},
+		SupportedQualities:   []string{"auto", "low", "medium", "high"},
+		MaxImages:            10,
+		DefaultSize:          "1024x1024",
+		DefaultQuality:       "auto",
+		SupportsStyle:        false,
+		SupportsTransparency: true,
+		SupportsEdit:         true,
+	})
+
+	r.Register(&ModelCapabilities{
 		Name:                 "gpt-image-1",
 		Provider:             ProviderOpenAI,
 		SupportedSizes:       []string{"1024x1024", "1536x1024", "1024x1536", "auto"},
