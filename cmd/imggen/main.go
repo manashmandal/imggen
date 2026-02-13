@@ -138,7 +138,7 @@ func newRootCmd(app *App) *cobra.Command {
 		Long: `imggen is a CLI tool for generating images and videos using AI APIs.
 
 Supported providers:
-  - OpenAI (gpt-image-1, dall-e-3, dall-e-2)
+  - OpenAI (gpt-image-1.5, gpt-image-1, dall-e-3, dall-e-2)
   - OpenAI Video (sora-2, sora-2-pro)
 
 Note: Only OpenAI is currently supported. Other providers (Stability AI, etc.) are work in progress.
@@ -172,14 +172,14 @@ Video Generation Examples:
 		},
 	}
 
-	cmd.Flags().StringVarP(&flagModel, "model", "m", "gpt-image-1", "model to use (gpt-image-1, dall-e-3, dall-e-2)")
+	cmd.Flags().StringVarP(&flagModel, "model", "m", "gpt-image-1.5", "model to use (gpt-image-1.5, gpt-image-1, dall-e-3, dall-e-2)")
 	cmd.Flags().StringVarP(&flagSize, "size", "s", "", "image size (e.g., 1024x1024)")
 	cmd.Flags().StringVarP(&flagQuality, "quality", "q", "", "quality level")
 	cmd.Flags().IntVarP(&flagCount, "count", "n", 1, "number of images to generate")
 	cmd.Flags().StringVarP(&flagOutput, "output", "o", "", "output filename or directory (directory when using --prompt)")
 	cmd.Flags().StringVarP(&flagFormat, "format", "f", "png", "output format (png, jpeg, webp)")
 	cmd.Flags().StringVar(&flagStyle, "style", "", "style for dall-e-3 (vivid, natural)")
-	cmd.Flags().BoolVarP(&flagTransparent, "transparent", "t", false, "transparent background (gpt-image-1 only)")
+	cmd.Flags().BoolVarP(&flagTransparent, "transparent", "t", false, "transparent background (gpt-image-1.5/gpt-image-1 only)")
 	cmd.Flags().StringArrayVar(&flagRefs, "ref", nil, "reference image path (repeatable)")
 	cmd.Flags().StringArrayVar(&flagRefPrompts, "ref-prompt", nil, "reference prompt aligned with --ref order")
 	cmd.Flags().Float64SliceVar(&flagRefWeights, "ref-weight", nil, "reference weight aligned with --ref order")
