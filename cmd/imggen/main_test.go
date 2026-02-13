@@ -1734,7 +1734,7 @@ func TestRootCmd_FlagDefaults(t *testing.T) {
 		flag   string
 		defVal string
 	}{
-		{"model", "gpt-image-1"},
+		{"model", "gpt-image-1.5"},
 		{"size", ""},
 		{"quality", ""},
 		{"count", "1"},
