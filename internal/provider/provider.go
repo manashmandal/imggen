@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -34,6 +35,15 @@ type VideoProvider interface {
 	GenerateVideo(ctx context.Context, req *models.VideoRequest) (*models.VideoResponse, error)
 	SupportsVideoModel(model string) bool
 	ListVideoModels() []string
+}
+
+type OCRProvider interface {
+	OCR(ctx context.Context, req *models.OCRRequest) (*models.OCRResponse, error)
+	SuggestSchema(ctx context.Context, req *models.OCRRequest) (json.RawMessage, error)
+}
+
+type ResponsesProvider interface {
+	GenerateWithResponses(ctx context.Context, req *models.ResponsesRequest) (*models.ResponsesResponse, error)
 }
 
 type Config struct {

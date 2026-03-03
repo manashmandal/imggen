@@ -15,40 +15,44 @@ import (
 )
 
 type REPL struct {
-	in         io.Reader
-	out        io.Writer
-	err        io.Writer
-	provider   provider.Provider
-	registry   *models.ModelRegistry
-	sessionMgr *session.Manager
-	displayer  *display.Displayer
-	saver      *image.Saver
-	commands   map[string]Command
-	running    bool
+	in                io.Reader
+	out               io.Writer
+	err               io.Writer
+	provider          provider.Provider
+	registry          *models.ModelRegistry
+	sessionMgr        *session.Manager
+	displayer         *display.Displayer
+	saver             *image.Saver
+	commands          map[string]Command
+	running           bool
+	lastResponseID    string
+	responsesProvider provider.ResponsesProvider
 }
 
 type Config struct {
-	In         io.Reader
-	Out        io.Writer
-	Err        io.Writer
-	Provider   provider.Provider
-	Registry   *models.ModelRegistry
-	SessionMgr *session.Manager
-	Displayer  *display.Displayer
-	Saver      *image.Saver
+	In                io.Reader
+	Out               io.Writer
+	Err               io.Writer
+	Provider          provider.Provider
+	Registry          *models.ModelRegistry
+	SessionMgr        *session.Manager
+	Displayer         *display.Displayer
+	Saver             *image.Saver
+	ResponsesProvider provider.ResponsesProvider
 }
 
 func New(cfg *Config) *REPL {
 	r := &REPL{
-		in:         cfg.In,
-		out:        cfg.Out,
-		err:        cfg.Err,
-		provider:   cfg.Provider,
-		registry:   cfg.Registry,
-		sessionMgr: cfg.SessionMgr,
-		displayer:  cfg.Displayer,
-		saver:      cfg.Saver,
-		commands:   make(map[string]Command),
+		in:                cfg.In,
+		out:               cfg.Out,
+		err:               cfg.Err,
+		provider:          cfg.Provider,
+		registry:          cfg.Registry,
+		sessionMgr:        cfg.SessionMgr,
+		displayer:         cfg.Displayer,
+		saver:             cfg.Saver,
+		commands:          make(map[string]Command),
+		responsesProvider: cfg.ResponsesProvider,
 	}
 	r.registerCommands()
 	return r

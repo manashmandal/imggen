@@ -14,6 +14,8 @@ type OCRRequest struct {
 	ImagePath   string          `json:"image_path,omitempty"`
 	ImageURL    string          `json:"image_url,omitempty"`
 	ImageData   []byte          `json:"-"`
+	ImagePaths  []string        `json:"image_paths,omitempty"`
+	ImageURLs   []string        `json:"image_urls,omitempty"`
 	Model       string          `json:"model"`
 	Schema      json.RawMessage `json:"schema,omitempty"`
 	SchemaName  string          `json:"schema_name,omitempty"`
@@ -31,7 +33,9 @@ func NewOCRRequest() *OCRRequest {
 }
 
 func (r *OCRRequest) Validate() error {
-	if r.ImagePath == "" && r.ImageURL == "" && len(r.ImageData) == 0 {
+	hasImage := r.ImagePath != "" || r.ImageURL != "" || len(r.ImageData) > 0 ||
+		len(r.ImagePaths) > 0 || len(r.ImageURLs) > 0
+	if !hasImage {
 		return ErrNoImageSource
 	}
 	if len(r.Schema) > 0 {

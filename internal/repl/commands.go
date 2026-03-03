@@ -60,6 +60,98 @@ func (c *GenerateCommand) Execute(ctx context.Context, r *REPL, args []string) e
 	prompt := strings.Join(args, " ")
 	model := r.sessionMgr.GetModel()
 
+	if r.responsesProvider != nil {
+		return c.executeWithResponses(ctx, r, prompt, model)
+	}
+
+	return c.executeWithImagesAPI(ctx, r, prompt, model)
+}
+
+func (c *GenerateCommand) executeWithResponses(ctx context.Context, r *REPL, prompt, model string) error {
+	req := models.NewResponsesRequest(prompt)
+	req.Model = model
+	req.PreviousResponseID = r.lastResponseID
+
+	if r.lastResponseID != "" {
+		req.Action = "auto"
+	} else {
+		req.Action = "generate"
+	}
+
+	fmt.Fprintf(r.out, "Generating with %s (Responses API)...\n", model)
+
+	resp, err := r.responsesProvider.GenerateWithResponses(ctx, req)
+	if err != nil {
+		fmt.Fprintf(r.err, "Responses API failed, falling back to Images API: %v\n", err)
+		return c.executeWithImagesAPI(ctx, r, prompt, model)
+	}
+
+	r.lastResponseID = resp.ID
+
+	if len(resp.Images) == 0 {
+		return fmt.Errorf("no image generated")
+	}
+
+	imagePath := r.sessionMgr.ImagePath()
+	imgResp := &models.Response{
+		Images:        resp.Images,
+		RevisedPrompt: resp.RevisedPrompt,
+		Cost:          resp.Cost,
+	}
+	paths, err := r.saver.SaveAll(ctx, imgResp, imagePath, models.FormatPNG)
+	if err != nil {
+		return fmt.Errorf("failed to save image: %w", err)
+	}
+
+	var costValue float64
+	if resp.Cost != nil {
+		costValue = resp.Cost.Total
+	}
+
+	iter := &session.Iteration{
+		Operation:     "generate",
+		Prompt:        prompt,
+		RevisedPrompt: resp.RevisedPrompt,
+		Model:         model,
+		ImagePath:     paths[0],
+		Metadata: session.IterationMetadata{
+			Format:   "png",
+			Cost:     costValue,
+			Provider: "openai",
+		},
+	}
+	if err := r.sessionMgr.AddIteration(ctx, iter); err != nil {
+		return fmt.Errorf("failed to save iteration: %w", err)
+	}
+
+	if resp.Cost != nil && resp.Cost.Total > 0 {
+		costEntry := &session.CostEntry{
+			IterationID: iter.ID,
+			SessionID:   r.sessionMgr.Current().ID,
+			Provider:    "openai",
+			Model:       model,
+			Cost:        resp.Cost.Total,
+			ImageCount:  len(resp.Images),
+			Timestamp:   iter.Timestamp,
+		}
+		if err := r.sessionMgr.LogCost(ctx, costEntry); err != nil {
+			fmt.Fprintf(r.err, "Warning: failed to log cost: %v\n", err)
+		}
+	}
+
+	if err := r.displayer.Display(ctx, &resp.Images[0]); err != nil {
+		fmt.Fprintf(r.err, "Warning: failed to display: %v\n", err)
+	}
+
+	fmt.Fprintf(r.out, "Saved: %s\n", paths[0])
+	if resp.Cost != nil {
+		fmt.Fprintf(r.out, "Cost: $%.4f\n", resp.Cost.Total)
+	}
+
+	return nil
+}
+
+func (c *GenerateCommand) executeWithImagesAPI(ctx context.Context, r *REPL, prompt, model string) error {
 	req := models.NewRequest(prompt)
 	req.Model = model
 
@@ -105,7 +197,6 @@ func (c *GenerateCommand) Execute(ctx context.Context, r *REPL, args []string) e
 		return fmt.Errorf("failed to save iteration: %w", err)
 	}
 
-	// Log cost to database
 	if resp.Cost != nil && resp.Cost.Total > 0 {
 		costEntry := &session.CostEntry{
 			IterationID: iter.ID,
