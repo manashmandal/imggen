@@ -161,6 +161,17 @@ func (app *App) logCost(ctx context.Context, providerName, model string, cost fl
 	}
 }
 
+var premiumModels = map[string]string{
+	"gpt-5.2":    "gpt-5.2 ($1.75/1M input tokens). Use -m gpt-5-mini for 7x cheaper, or -m gpt-5-nano for 35x cheaper.",
+	"sora-2-pro": "sora-2-pro ($0.30/sec). Use -m sora-2 for 3x cheaper ($0.10/sec).",
+}
+
+func (app *App) warnPremiumModel(model string) {
+	if msg, ok := premiumModels[model]; ok {
+		fmt.Fprintf(app.Err, "\033[33mWarning: using premium model %s\033[0m\n", msg)
+	}
+}
+
 func main() {
 	if err := run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -799,7 +810,7 @@ Examples:
 	}
 
 	cmd.Flags().StringVarP(&flagBatchOutput, "output", "o", "", "output directory for generated images")
-	cmd.Flags().StringVarP(&flagBatchModel, "model", "m", "gpt-image-1", "default model for prompts without model specified")
+	cmd.Flags().StringVarP(&flagBatchModel, "model", "m", "gpt-image-1.5", "default model for prompts without model specified")
 	cmd.Flags().StringVarP(&flagBatchSize, "size", "s", "", "default image size")
 	cmd.Flags().StringVarP(&flagBatchQuality, "quality", "q", "", "default quality level")
 	cmd.Flags().StringVarP(&flagBatchFormat, "format", "f", "png", "output format (png, jpeg, webp)")
@@ -926,7 +937,7 @@ Examples:
 	}
 
 	cmd.Flags().StringVarP(&flagWorkflowOutput, "output", "o", "", "output directory for generated images")
-	cmd.Flags().StringVarP(&flagWorkflowModel, "model", "m", "gpt-image-1", "default model for workflow steps without model specified")
+	cmd.Flags().StringVarP(&flagWorkflowModel, "model", "m", "gpt-image-1.5", "default model for workflow steps without model specified")
 	cmd.Flags().StringVarP(&flagWorkflowSize, "size", "s", "", "default image size")
 	cmd.Flags().StringVarP(&flagWorkflowQuality, "quality", "q", "", "default quality level")
 	cmd.Flags().StringVarP(&flagWorkflowFormat, "format", "f", "png", "default output format (png, jpeg, webp)")
@@ -1348,7 +1359,7 @@ Examples:
 		},
 	}
 
-	cmd.Flags().StringVarP(&flagOCRModel, "model", "m", "gpt-5-mini", "model to use (gpt-5.2, gpt-5-mini, gpt-5-nano)")
+	cmd.Flags().StringVarP(&flagOCRModel, "model", "m", "gpt-5.2", "model to use (gpt-5.2, gpt-5-mini, gpt-5-nano)")
 	cmd.Flags().StringVarP(&flagOCRSchema, "schema", "s", "", "JSON schema file for structured output")
 	cmd.Flags().StringVar(&flagOCRSchemaName, "schema-name", "", "name for the JSON schema (default: extracted_data)")
 	cmd.Flags().BoolVar(&flagOCRSuggestSchema, "suggest-schema", false, "suggest a JSON schema based on image content")
@@ -1436,6 +1447,7 @@ func runOCR(_ *cobra.Command, args []string, app *App) error {
 	if source == "" {
 		source = req.ImageURL
 	}
+	app.warnPremiumModel(req.Model)
 	fmt.Fprintf(app.Out, "Extracting text from %s using %s...\n", source, req.Model)
 
 	resp, err := ocrProv.OCR(ctx, req)
@@ -1499,7 +1511,7 @@ Examples:
 		},
 	}
 
-	cmd.Flags().StringVarP(&flagVideoModel, "model", "m", "sora-2", "model to use (sora-2, sora-2-pro)")
+	cmd.Flags().StringVarP(&flagVideoModel, "model", "m", "sora-2-pro", "model to use (sora-2, sora-2-pro)")
 	cmd.Flags().IntVarP(&flagVideoDuration, "duration", "d", 0, "video duration in seconds (default: model default)")
 	cmd.Flags().StringVarP(&flagVideoSize, "size", "s", "", "video size (e.g., 1280x720)")
 	cmd.Flags().StringVarP(&flagVideoOutput, "output", "o", "", "output filename")
@@ -1548,6 +1560,7 @@ func runVideo(_ *cobra.Command, args []string, app *App) error {
 		return fmt.Errorf("provider does not support video generation")
 	}
 
+	app.warnPremiumModel(req.Model)
 	fmt.Fprintf(app.Out, "Generating video with %s (%d seconds)...\n", req.Model, req.Duration)
 
 	resp, err := videoProv.GenerateVideo(ctx, req)
@@ -1760,7 +1773,7 @@ Examples:
 		},
 	}
 
-	cmd.Flags().StringVarP(&flagDescribeModel, "model", "m", "gpt-5-mini", "model to use (gpt-5.2, gpt-5-mini, gpt-5-nano)")
+	cmd.Flags().StringVarP(&flagDescribeModel, "model", "m", "gpt-5.2", "model to use (gpt-5.2, gpt-5-mini, gpt-5-nano)")
 	cmd.Flags().StringVarP(&flagDescribePrompt, "prompt", "p", "", "question or instruction about the image")
 	cmd.Flags().StringVarP(&flagDescribeOutput, "output", "o", "", "save output to file")
 	cmd.Flags().StringVar(&flagDescribeURL, "url", "", "image URL instead of file path")
@@ -1840,6 +1853,7 @@ func runDescribe(_ *cobra.Command, args []string, app *App) error {
 	} else if len(args) > 0 {
 		sourceDesc = args[0]
 	}
+	app.warnPremiumModel(req.Model)
 	fmt.Fprintf(app.Out, "Analyzing %s with %s...\n", sourceDesc, req.Model)
 
 	resp, err := ocrProv.OCR(ctx, req)
