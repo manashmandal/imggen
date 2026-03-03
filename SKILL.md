@@ -262,7 +262,7 @@ imggen video <prompt> [flags]
 
 | Flag | Short | Default | Description |
 |------|-------|---------|-------------|
-| `--model` | `-m` | `sora-2` | Model (sora-2, sora-2-pro) |
+| `--model` | `-m` | `sora-2-pro` | Model (sora-2, sora-2-pro) |
 | `--duration` | `-d` | model default | Duration in seconds |
 | `--size` | `-s` | `720x1280` | Video size (e.g., 1280x720) |
 | `--output` | `-o` | auto-generated | Output filename |
@@ -335,7 +335,7 @@ imggen describe <image...> [flags]
 
 | Flag | Short | Default | Description |
 |------|-------|---------|-------------|
-| `--model` | `-m` | `gpt-5-mini` | Model (gpt-5.2, gpt-5-mini, gpt-5-nano) |
+| `--model` | `-m` | `gpt-5.2` | Model (gpt-5.2, gpt-5-mini, gpt-5-nano) |
 | `--prompt` | `-p` | auto | Question or instruction about the image |
 | `--output` | `-o` | stdout | Save output to file |
 | `--url` | | | Image URL instead of file path |
@@ -417,7 +417,7 @@ imggen ocr <image-path> [flags]
 
 | Flag | Short | Default | Description |
 |------|-------|---------|-------------|
-| `--model` | `-m` | `gpt-5-mini` | Model: gpt-5.2, gpt-5-mini, gpt-5-nano |
+| `--model` | `-m` | `gpt-5.2` | Model: gpt-5.2, gpt-5-mini, gpt-5-nano |
 | `--schema` | `-s` | | JSON schema file for structured output |
 | `--schema-name` | | `extracted_data` | Name for the JSON schema |
 | `--suggest-schema` | | `false` | Suggest a JSON schema based on image content |
