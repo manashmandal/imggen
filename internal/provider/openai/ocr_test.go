@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/manash/imggen/internal/provider"
@@ -695,6 +696,225 @@ func TestProvider_SuggestSchema_ValidationError(t *testing.T) {
 	_, err = prov.SuggestSchema(context.Background(), req)
 	if err == nil {
 		t.Error("SuggestSchema() should return error for empty request")
+	}
+}
+
+func createTempPNG(t *testing.T) string {
+	t.Helper()
+	f, err := os.CreateTemp("", "test-ocr-*.png")
+	if err != nil {
+		t.Fatalf("Failed to create temp file: %v", err)
+	}
+	// PNG magic bytes followed by minimal data
+	f.Write([]byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A})
+	f.Close()
+	t.Cleanup(func() { os.Remove(f.Name()) })
+	return f.Name()
+}
+
+func TestProvider_OCR_MultipleImagePaths(t *testing.T) {
+	path1 := createTempPNG(t)
+	path2 := createTempPNG(t)
+
+	var receivedReq chatRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&receivedReq)
+		resp := chatResponse{
+			Choices: []chatChoice{{Message: chatMessageOut{Content: "multi image result"}}},
+			Usage:   &chatUsage{PromptTokens: 200, CompletionTokens: 100},
+		}
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	registry := models.DefaultRegistry()
+	prov, err := New(&provider.Config{APIKey: "test-key", BaseURL: server.URL}, registry)
+	if err != nil {
+		t.Fatalf("Failed to create provider: %v", err)
+	}
+
+	req := models.NewOCRRequest()
+	req.ImagePaths = []string{path1, path2}
+
+	resp, err := prov.OCR(context.Background(), req)
+	if err != nil {
+		t.Fatalf("OCR() error = %v", err)
+	}
+
+	if resp.Text != "multi image result" {
+		t.Errorf("OCR().Text = %q, want %q", resp.Text, "multi image result")
+	}
+
+	content := receivedReq.Messages[0].Content
+	// Expect: 1 text entry + 2 image entries from ImagePaths
+	if len(content) != 3 {
+		t.Fatalf("Expected 3 content entries (1 text + 2 images), got %d", len(content))
+	}
+	if content[0].Type != "text" {
+		t.Errorf("content[0].Type = %q, want %q", content[0].Type, "text")
+	}
+	for i := 1; i <= 2; i++ {
+		if content[i].Type != "image_url" {
+			t.Errorf("content[%d].Type = %q, want %q", i, content[i].Type, "image_url")
+		}
+		if content[i].ImageURL == nil {
+			t.Fatalf("content[%d].ImageURL is nil", i)
+		}
+		if !strings.HasPrefix(content[i].ImageURL.URL, "data:image/png;base64,") {
+			t.Errorf("content[%d].ImageURL.URL does not start with data:image/png;base64,", i)
+		}
+	}
+}
+
+func TestProvider_OCR_MultipleImageURLs(t *testing.T) {
+	var receivedReq chatRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&receivedReq)
+		resp := chatResponse{
+			Choices: []chatChoice{{Message: chatMessageOut{Content: "urls result"}}},
+			Usage:   &chatUsage{PromptTokens: 200, CompletionTokens: 100},
+		}
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	registry := models.DefaultRegistry()
+	prov, err := New(&provider.Config{APIKey: "test-key", BaseURL: server.URL}, registry)
+	if err != nil {
+		t.Fatalf("Failed to create provider: %v", err)
+	}
+
+	req := models.NewOCRRequest()
+	req.ImageURLs = []string{
+		"https://example.com/img1.png",
+		"https://example.com/img2.png",
+		"https://example.com/img3.png",
+	}
+
+	resp, err := prov.OCR(context.Background(), req)
+	if err != nil {
+		t.Fatalf("OCR() error = %v", err)
+	}
+
+	if resp.Text != "urls result" {
+		t.Errorf("OCR().Text = %q, want %q", resp.Text, "urls result")
+	}
+
+	content := receivedReq.Messages[0].Content
+	// Expect: 1 text entry + 3 image_url entries
+	if len(content) != 4 {
+		t.Fatalf("Expected 4 content entries (1 text + 3 urls), got %d", len(content))
+	}
+	if content[0].Type != "text" {
+		t.Errorf("content[0].Type = %q, want %q", content[0].Type, "text")
+	}
+
+	expectedURLs := []string{
+		"https://example.com/img1.png",
+		"https://example.com/img2.png",
+		"https://example.com/img3.png",
+	}
+	for i, expected := range expectedURLs {
+		idx := i + 1
+		if content[idx].Type != "image_url" {
+			t.Errorf("content[%d].Type = %q, want %q", idx, content[idx].Type, "image_url")
+		}
+		if content[idx].ImageURL == nil {
+			t.Fatalf("content[%d].ImageURL is nil", idx)
+		}
+		if content[idx].ImageURL.URL != expected {
+			t.Errorf("content[%d].ImageURL.URL = %q, want %q", idx, content[idx].ImageURL.URL, expected)
+		}
+		if content[idx].ImageURL.Detail != "high" {
+			t.Errorf("content[%d].ImageURL.Detail = %q, want %q", idx, content[idx].ImageURL.Detail, "high")
+		}
+	}
+}
+
+func TestProvider_OCR_MixedImagePathsAndURLs(t *testing.T) {
+	path1 := createTempPNG(t)
+
+	var receivedReq chatRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&receivedReq)
+		resp := chatResponse{
+			Choices: []chatChoice{{Message: chatMessageOut{Content: "mixed result"}}},
+			Usage:   &chatUsage{PromptTokens: 300, CompletionTokens: 150},
+		}
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	registry := models.DefaultRegistry()
+	prov, err := New(&provider.Config{APIKey: "test-key", BaseURL: server.URL}, registry)
+	if err != nil {
+		t.Fatalf("Failed to create provider: %v", err)
+	}
+
+	req := models.NewOCRRequest()
+	req.ImagePaths = []string{path1}
+	req.ImageURLs = []string{"https://example.com/remote.png"}
+
+	resp, err := prov.OCR(context.Background(), req)
+	if err != nil {
+		t.Fatalf("OCR() error = %v", err)
+	}
+
+	if resp.Text != "mixed result" {
+		t.Errorf("OCR().Text = %q, want %q", resp.Text, "mixed result")
+	}
+
+	content := receivedReq.Messages[0].Content
+	// Expect: 1 text + 1 file-based image + 1 URL-based image
+	if len(content) != 3 {
+		t.Fatalf("Expected 3 content entries (1 text + 1 file + 1 url), got %d", len(content))
+	}
+
+	if content[0].Type != "text" {
+		t.Errorf("content[0].Type = %q, want %q", content[0].Type, "text")
+	}
+
+	// File-based image comes first (from ImagePaths)
+	if content[1].Type != "image_url" {
+		t.Errorf("content[1].Type = %q, want %q", content[1].Type, "image_url")
+	}
+	if content[1].ImageURL == nil {
+		t.Fatal("content[1].ImageURL is nil")
+	}
+	if !strings.HasPrefix(content[1].ImageURL.URL, "data:image/png;base64,") {
+		t.Error("content[1] should be a base64 data URL from file")
+	}
+
+	// URL-based image comes second (from ImageURLs)
+	if content[2].Type != "image_url" {
+		t.Errorf("content[2].Type = %q, want %q", content[2].Type, "image_url")
+	}
+	if content[2].ImageURL == nil {
+		t.Fatal("content[2].ImageURL is nil")
+	}
+	if content[2].ImageURL.URL != "https://example.com/remote.png" {
+		t.Errorf("content[2].ImageURL.URL = %q, want %q", content[2].ImageURL.URL, "https://example.com/remote.png")
+	}
+}
+
+func TestProvider_OCR_MultipleImagePaths_FileNotFound(t *testing.T) {
+	validPath := createTempPNG(t)
+
+	registry := models.DefaultRegistry()
+	prov, err := New(&provider.Config{APIKey: "test-key"}, registry)
+	if err != nil {
+		t.Fatalf("Failed to create provider: %v", err)
+	}
+
+	req := models.NewOCRRequest()
+	req.ImagePaths = []string{validPath, "/nonexistent/image.png"}
+
+	_, err = prov.OCR(context.Background(), req)
+	if err == nil {
+		t.Error("OCR() should return error when an ImagePaths entry does not exist")
+	}
+	if !strings.Contains(err.Error(), "failed to prepare image") {
+		t.Errorf("error should mention 'failed to prepare image', got: %v", err)
 	}
 }
 

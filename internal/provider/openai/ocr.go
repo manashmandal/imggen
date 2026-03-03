@@ -106,14 +106,31 @@ func (p *Provider) OCR(ctx context.Context, req *models.OCRRequest) (*models.OCR
 		}
 	}
 
+	msgContent := []chatContent{
+		{Type: "text", Text: prompt},
+	}
+
+	if len(req.ImagePaths) > 0 || len(req.ImageURLs) > 0 {
+		for _, path := range req.ImagePaths {
+			singleReq := &models.OCRRequest{ImagePath: path}
+			imgContent, err := p.prepareImageContent(ctx, singleReq)
+			if err != nil {
+				return nil, fmt.Errorf("failed to prepare image %s: %w", path, err)
+			}
+			msgContent = append(msgContent, imgContent)
+		}
+		for _, url := range req.ImageURLs {
+			msgContent = append(msgContent, chatContent{
+				Type:     "image_url",
+				ImageURL: &imageURL{URL: url, Detail: "high"},
+			})
+		}
+	} else {
+		msgContent = append(msgContent, imageContent)
+	}
+
 	messages := []chatMessage{
-		{
-			Role: "user",
-			Content: []chatContent{
-				{Type: "text", Text: prompt},
-				imageContent,
-			},
-		},
+		{Role: "user", Content: msgContent},
 	}
 
 	chatReq := &chatRequest{

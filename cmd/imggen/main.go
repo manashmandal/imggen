@@ -94,6 +94,26 @@ var (
 	flagVideoOutput   string
 )
 
+var (
+	flagEditModel    string
+	flagEditSize     string
+	flagEditQuality  string
+	flagEditCount    int
+	flagEditOutput   string
+	flagEditFormat   string
+	flagEditMask     string
+	flagEditBgRemove bool
+	flagEditShow     bool
+)
+
+var (
+	flagDescribeModel  string
+	flagDescribePrompt string
+	flagDescribeOutput string
+	flagDescribeURL    string
+	flagDescribeDetail bool
+)
+
 type App struct {
 	Out          io.Writer
 	Err          io.Writer
@@ -118,6 +138,40 @@ func DefaultApp() *App {
 	}
 }
 
+func (app *App) logCost(ctx context.Context, providerName, model string, cost float64, imageCount int) {
+	if cost <= 0 {
+		return
+	}
+	store, err := session.NewStore()
+	if err != nil {
+		return
+	}
+	defer store.Close()
+	entry := &session.CostEntry{
+		IterationID: "",
+		SessionID:   "",
+		Provider:    providerName,
+		Model:       model,
+		Cost:        cost,
+		ImageCount:  imageCount,
+		Timestamp:   time.Now(),
+	}
+	if logErr := store.LogCost(ctx, entry); logErr != nil {
+		fmt.Fprintf(app.Err, "Warning: failed to log cost: %v\n", logErr)
+	}
+}
+
+var premiumModels = map[string]string{
+	"gpt-5.2":    "gpt-5.2 ($1.75/1M input tokens). Use -m gpt-5-mini for 7x cheaper, or -m gpt-5-nano for 35x cheaper.",
+	"sora-2-pro": "sora-2-pro ($0.30/sec). Use -m sora-2 for 3x cheaper ($0.10/sec).",
+}
+
+func (app *App) warnPremiumModel(model string) {
+	if msg, ok := premiumModels[model]; ok {
+		fmt.Fprintf(app.Err, "\033[33mWarning: using premium model %s\033[0m\n", msg)
+	}
+}
+
 func main() {
 	if err := run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -135,25 +189,30 @@ func newRootCmd(app *App) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "imggen [prompt]",
 		Short: "Generate images and videos using AI generation APIs",
-		Long: `imggen is a CLI tool for generating images and videos using AI APIs.
+		Long: `imggen is a CLI tool for generating, editing, and analyzing images using AI APIs.
 
 Supported providers:
   - OpenAI (gpt-image-1.5, gpt-image-1, dall-e-3, dall-e-2)
   - OpenAI Video (sora-2, sora-2-pro)
 
-Note: Only OpenAI is currently supported. Other providers (Stability AI, etc.) are work in progress.
-
-Image Generation Examples:
+Image Generation:
   imggen "a sunset over mountains"
-  imggen -m dall-e-3 -s 1792x1024 -q hd "panoramic cityscape"
   imggen -m gpt-image-1 -n 3 --transparent "logo design"
-  imggen --prompt "a sunset" --prompt "a cat" -o ./output
-  imggen -i  # start interactive mode
 
-Video Generation Examples:
+Image Editing:
+  imggen edit photo.png "make the sky purple"
+  imggen edit photo.png --mask mask.png "replace the text"
+  imggen edit photo.png --bg-remove
+
+Image Analysis:
+  imggen describe photo.png
+  imggen describe a.png b.png -p "compare these"
+
+Video Generation:
   imggen video "a cat walking on a beach"
-  imggen video -m sora-2-pro -d 8 "sunset over mountains"
-  imggen video -s 1280x720 -o myvideo.mp4 "dancing robot"`,
+
+OCR:
+  imggen ocr receipt.png --schema invoice.json`,
 		Args: func(cmd *cobra.Command, args []string) error {
 			if flagInteractive {
 				return nil
@@ -200,6 +259,8 @@ Video Generation Examples:
 	cmd.AddCommand(newKeysCmd(app))
 	cmd.AddCommand(newOCRCmd(app))
 	cmd.AddCommand(newVideoCmd(app))
+	cmd.AddCommand(newEditCmd(app))
+	cmd.AddCommand(newDescribeCmd(app))
 
 	return cmd
 }
@@ -393,23 +454,7 @@ func runGenerate(_ *cobra.Command, args []string, app *App) error {
 			resp.Cost.Total, len(resp.Images), resp.Cost.PerImage,
 			req.Model, req.Size, req.Quality)
 
-		// Log cost to database (empty strings for iteration/session as CLI mode doesn't have sessions)
-		store, err := session.NewStore()
-		if err == nil {
-			defer store.Close()
-			costEntry := &session.CostEntry{
-				IterationID: "",
-				SessionID:   "",
-				Provider:    string(prov.Name()),
-				Model:       req.Model,
-				Cost:        resp.Cost.Total,
-				ImageCount:  len(resp.Images),
-				Timestamp:   time.Now(),
-			}
-			if logErr := store.LogCost(ctx, costEntry); logErr != nil {
-				fmt.Fprintf(app.Err, "Warning: failed to log cost: %v\n", logErr)
-			}
-		}
+		app.logCost(ctx, string(prov.Name()), req.Model, resp.Cost.Total, len(resp.Images))
 	}
 
 	if flagShow {
@@ -560,24 +605,7 @@ func runMultiPrompt(ctx context.Context, app *App, apiKey string, format models.
 			totalCost += r.Cost
 		}
 	}
-	if totalCost > 0 {
-		store, storeErr := session.NewStore()
-		if storeErr == nil {
-			defer store.Close()
-			costEntry := &session.CostEntry{
-				IterationID: "",
-				SessionID:   "",
-				Provider:    string(prov.Name()),
-				Model:       flagModel,
-				Cost:        totalCost,
-				ImageCount:  countSuccessful(results),
-				Timestamp:   time.Now(),
-			}
-			if logErr := store.LogCost(ctx, costEntry); logErr != nil {
-				fmt.Fprintf(app.Err, "Warning: failed to log cost: %v\n", logErr)
-			}
-		}
-	}
+	app.logCost(ctx, string(prov.Name()), flagModel, totalCost, countSuccessful(results))
 
 	return nil
 }
@@ -605,15 +633,21 @@ func runInteractive(_ *cobra.Command, app *App) error {
 
 	sessionMgr := session.NewManager(store, flagModel)
 
+	var responsesProv provider.ResponsesProvider
+	if rp, ok := prov.(provider.ResponsesProvider); ok {
+		responsesProv = rp
+	}
+
 	replCfg := &repl.Config{
-		In:         os.Stdin,
-		Out:        app.Out,
-		Err:        app.Err,
-		Provider:   prov,
-		Registry:   app.Registry,
-		SessionMgr: sessionMgr,
-		Displayer:  app.NewDisplayer(app.Out),
-		Saver:      app.NewSaver(),
+		In:                os.Stdin,
+		Out:               app.Out,
+		Err:               app.Err,
+		Provider:          prov,
+		Registry:          app.Registry,
+		SessionMgr:        sessionMgr,
+		Displayer:         app.NewDisplayer(app.Out),
+		Saver:             app.NewSaver(),
+		ResponsesProvider: responsesProv,
 	}
 
 	r := repl.New(replCfg)
@@ -776,7 +810,7 @@ Examples:
 	}
 
 	cmd.Flags().StringVarP(&flagBatchOutput, "output", "o", "", "output directory for generated images")
-	cmd.Flags().StringVarP(&flagBatchModel, "model", "m", "gpt-image-1", "default model for prompts without model specified")
+	cmd.Flags().StringVarP(&flagBatchModel, "model", "m", "gpt-image-1.5", "default model for prompts without model specified")
 	cmd.Flags().StringVarP(&flagBatchSize, "size", "s", "", "default image size")
 	cmd.Flags().StringVarP(&flagBatchQuality, "quality", "q", "", "default quality level")
 	cmd.Flags().StringVarP(&flagBatchFormat, "format", "f", "png", "output format (png, jpeg, webp)")
@@ -882,24 +916,7 @@ func runBatch(_ *cobra.Command, args []string, app *App) error {
 			totalCost += r.Cost
 		}
 	}
-	if totalCost > 0 {
-		store, storeErr := session.NewStore()
-		if storeErr == nil {
-			defer store.Close()
-			costEntry := &session.CostEntry{
-				IterationID: "",
-				SessionID:   "",
-				Provider:    string(prov.Name()),
-				Model:       flagBatchModel,
-				Cost:        totalCost,
-				ImageCount:  countSuccessful(results),
-				Timestamp:   time.Now(),
-			}
-			if logErr := store.LogCost(ctx, costEntry); logErr != nil {
-				fmt.Fprintf(app.Err, "Warning: failed to log cost: %v\n", logErr)
-			}
-		}
-	}
+	app.logCost(ctx, string(prov.Name()), flagBatchModel, totalCost, countSuccessful(results))
 
 	return nil
 }
@@ -920,7 +937,7 @@ Examples:
 	}
 
 	cmd.Flags().StringVarP(&flagWorkflowOutput, "output", "o", "", "output directory for generated images")
-	cmd.Flags().StringVarP(&flagWorkflowModel, "model", "m", "gpt-image-1", "default model for workflow steps without model specified")
+	cmd.Flags().StringVarP(&flagWorkflowModel, "model", "m", "gpt-image-1.5", "default model for workflow steps without model specified")
 	cmd.Flags().StringVarP(&flagWorkflowSize, "size", "s", "", "default image size")
 	cmd.Flags().StringVarP(&flagWorkflowQuality, "quality", "q", "", "default quality level")
 	cmd.Flags().StringVarP(&flagWorkflowFormat, "format", "f", "png", "default output format (png, jpeg, webp)")
@@ -1342,7 +1359,7 @@ Examples:
 		},
 	}
 
-	cmd.Flags().StringVarP(&flagOCRModel, "model", "m", "gpt-5-mini", "model to use (gpt-5.2, gpt-5-mini, gpt-5-nano)")
+	cmd.Flags().StringVarP(&flagOCRModel, "model", "m", "gpt-5.2", "model to use (gpt-5.2, gpt-5-mini, gpt-5-nano)")
 	cmd.Flags().StringVarP(&flagOCRSchema, "schema", "s", "", "JSON schema file for structured output")
 	cmd.Flags().StringVar(&flagOCRSchemaName, "schema-name", "", "name for the JSON schema (default: extracted_data)")
 	cmd.Flags().BoolVar(&flagOCRSuggestSchema, "suggest-schema", false, "suggest a JSON schema based on image content")
@@ -1370,10 +1387,7 @@ func runOCR(_ *cobra.Command, args []string, app *App) error {
 		return fmt.Errorf("failed to create provider: %w", err)
 	}
 
-	ocrProv, ok := prov.(interface {
-		OCR(ctx context.Context, req *models.OCRRequest) (*models.OCRResponse, error)
-		SuggestSchema(ctx context.Context, req *models.OCRRequest) (json.RawMessage, error)
-	})
+	ocrProv, ok := prov.(provider.OCRProvider)
 	if !ok {
 		return fmt.Errorf("provider does not support OCR")
 	}
@@ -1433,6 +1447,7 @@ func runOCR(_ *cobra.Command, args []string, app *App) error {
 	if source == "" {
 		source = req.ImageURL
 	}
+	app.warnPremiumModel(req.Model)
 	fmt.Fprintf(app.Out, "Extracting text from %s using %s...\n", source, req.Model)
 
 	resp, err := ocrProv.OCR(ctx, req)
@@ -1468,23 +1483,7 @@ func runOCR(_ *cobra.Command, args []string, app *App) error {
 		fmt.Fprintf(app.Out, "\nCost: $%.6f (input: %d tokens, output: %d tokens)\n",
 			resp.Cost.Total, resp.InputTokens, resp.OutputTokens)
 
-		// Log cost to database
-		store, err := session.NewStore()
-		if err == nil {
-			defer store.Close()
-			costEntry := &session.CostEntry{
-				IterationID: "",
-				SessionID:   "",
-				Provider:    "openai",
-				Model:       req.Model,
-				Cost:        resp.Cost.Total,
-				ImageCount:  1,
-				Timestamp:   time.Now(),
-			}
-			if logErr := store.LogCost(ctx, costEntry); logErr != nil {
-				fmt.Fprintf(app.Err, "Warning: failed to log cost: %v\n", logErr)
-			}
-		}
+		app.logCost(ctx, "openai", req.Model, resp.Cost.Total, 1)
 	}
 
 	return nil
@@ -1512,7 +1511,7 @@ Examples:
 		},
 	}
 
-	cmd.Flags().StringVarP(&flagVideoModel, "model", "m", "sora-2", "model to use (sora-2, sora-2-pro)")
+	cmd.Flags().StringVarP(&flagVideoModel, "model", "m", "sora-2-pro", "model to use (sora-2, sora-2-pro)")
 	cmd.Flags().IntVarP(&flagVideoDuration, "duration", "d", 0, "video duration in seconds (default: model default)")
 	cmd.Flags().StringVarP(&flagVideoSize, "size", "s", "", "video size (e.g., 1280x720)")
 	cmd.Flags().StringVarP(&flagVideoOutput, "output", "o", "", "output filename")
@@ -1561,6 +1560,7 @@ func runVideo(_ *cobra.Command, args []string, app *App) error {
 		return fmt.Errorf("provider does not support video generation")
 	}
 
+	app.warnPremiumModel(req.Model)
 	fmt.Fprintf(app.Out, "Generating video with %s (%d seconds)...\n", req.Model, req.Duration)
 
 	resp, err := videoProv.GenerateVideo(ctx, req)
@@ -1587,26 +1587,298 @@ func runVideo(_ *cobra.Command, args []string, app *App) error {
 		fmt.Fprintf(app.Out, "Cost: $%.4f (%d seconds @ $%.4f/second, %s)\n",
 			resp.Cost.Total, req.Duration, resp.Cost.PerImage, req.Model)
 
-		// Log cost to database
-		store, err := session.NewStore()
-		if err == nil {
-			defer store.Close()
-			costEntry := &session.CostEntry{
-				IterationID: "",
-				SessionID:   "",
-				Provider:    string(prov.Name()),
-				Model:       req.Model,
-				Cost:        resp.Cost.Total,
-				ImageCount:  1, // Count as 1 item for video
-				Timestamp:   time.Now(),
+		app.logCost(ctx, string(prov.Name()), req.Model, resp.Cost.Total, 1)
+	}
+
+	fmt.Fprintln(app.Out, "Done!")
+	return nil
+}
+
+// Edit command
+
+func newEditCmd(app *App) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "edit <image> [prompt]",
+		Short: "Edit an existing image with a text instruction",
+		Long: `Edit an existing image using OpenAI's image editing API.
+
+Supports inpainting with masks and background removal.
+
+Examples:
+  imggen edit photo.png "make the sky purple"
+  imggen edit photo.png --mask region.png "replace text with ACME"
+  imggen edit photo.png --bg-remove
+  imggen edit photo.png --bg-remove -o transparent.png`,
+		Args: func(cmd *cobra.Command, args []string) error {
+			if flagEditBgRemove {
+				return cobra.MinimumNArgs(1)(cmd, args)
 			}
-			if logErr := store.LogCost(ctx, costEntry); logErr != nil {
-				fmt.Fprintf(app.Err, "Warning: failed to log cost: %v\n", logErr)
-			}
+			return cobra.ExactArgs(2)(cmd, args)
+		},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runEdit(cmd, args, app)
+		},
+	}
+
+	cmd.Flags().StringVarP(&flagEditModel, "model", "m", "gpt-image-1.5", "model to use (gpt-image-1.5, gpt-image-1, dall-e-2)")
+	cmd.Flags().StringVarP(&flagEditSize, "size", "s", "", "output size (e.g., 1024x1024)")
+	cmd.Flags().StringVarP(&flagEditQuality, "quality", "q", "", "quality level (auto, low, medium, high)")
+	cmd.Flags().IntVarP(&flagEditCount, "count", "n", 1, "number of edit variations (default 1)")
+	cmd.Flags().StringVarP(&flagEditOutput, "output", "o", "", "output filename or directory")
+	cmd.Flags().StringVarP(&flagEditFormat, "format", "f", "png", "output format (png, jpeg, webp)")
+	cmd.Flags().StringVar(&flagEditMask, "mask", "", "mask image for inpainting (PNG with alpha channel)")
+	cmd.Flags().BoolVar(&flagEditBgRemove, "bg-remove", false, "remove background (no prompt needed)")
+	cmd.Flags().BoolVarP(&flagEditShow, "show", "S", false, "display result in terminal")
+	cmd.Flags().StringVar(&flagAPIKey, "api-key", "", "API key (defaults to OPENAI_API_KEY)")
+	cmd.Flags().BoolVarP(&flagVerbose, "verbose", "v", false, "log HTTP requests and responses")
+
+	return cmd
+}
+
+func runEdit(_ *cobra.Command, args []string, app *App) error {
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
+
+	apiKey, _, err := keys.GetAPIKey(flagAPIKey, "openai", "OPENAI_API_KEY")
+	if err != nil {
+		return err
+	}
+
+	imagePath := args[0]
+	imageData, err := os.ReadFile(imagePath)
+	if err != nil {
+		return fmt.Errorf("failed to read image %q: %w", imagePath, err)
+	}
+
+	format := models.OutputFormat(flagEditFormat)
+
+	var prompt string
+	if flagEditBgRemove {
+		prompt = "Remove the background completely, preserve the subject with clean edges"
+		if format != models.FormatPNG && format != models.FormatWebP {
+			format = models.FormatPNG
+		}
+	} else {
+		prompt = args[1]
+	}
+
+	if !format.IsValid() {
+		return fmt.Errorf("invalid format %q: must be one of %v", flagEditFormat, models.ValidFormats())
+	}
+
+	req := models.NewEditRequest(imageData, prompt)
+	req.Model = flagEditModel
+	req.Size = flagEditSize
+	req.Quality = flagEditQuality
+	req.Count = flagEditCount
+	req.Format = format
+
+	if flagEditBgRemove {
+		req.Background = "transparent"
+	}
+
+	if flagEditMask != "" {
+		maskData, err := os.ReadFile(flagEditMask)
+		if err != nil {
+			return fmt.Errorf("failed to read mask %q: %w", flagEditMask, err)
+		}
+		req.Mask = maskData
+	}
+
+	caps, ok := app.Registry.Get(flagEditModel)
+	if !ok {
+		return fmt.Errorf("unknown model %q: available models: %v", flagEditModel, app.Registry.List())
+	}
+	if !caps.SupportsEdit {
+		return fmt.Errorf("model %q does not support editing", flagEditModel)
+	}
+	if req.Size == "" {
+		req.Size = caps.DefaultSize
+	}
+
+	providerCfg := &provider.Config{APIKey: apiKey, Verbose: flagVerbose}
+	prov, err := app.NewProvider(providerCfg, app.Registry)
+	if err != nil {
+		return fmt.Errorf("failed to create provider: %w", err)
+	}
+
+	action := "Editing"
+	if flagEditBgRemove {
+		action = "Removing background from"
+	} else if flagEditMask != "" {
+		action = "Inpainting"
+	}
+	fmt.Fprintf(app.Out, "%s image with %s...\n", action, req.Model)
+
+	resp, err := prov.Edit(ctx, req)
+	if err != nil {
+		return fmt.Errorf("edit failed: %w", err)
+	}
+
+	saver := app.NewSaver()
+	paths, err := saver.SaveAll(ctx, resp, flagEditOutput, format)
+	if err != nil {
+		return err
+	}
+
+	for _, path := range paths {
+		fmt.Fprintf(app.Out, "Saved: %s\n", path)
+	}
+
+	if resp.Cost != nil {
+		fmt.Fprintf(app.Out, "Cost: $%.4f (%d image(s) @ $%.4f/image, %s %s)\n",
+			resp.Cost.Total, len(resp.Images), resp.Cost.PerImage,
+			req.Model, req.Size)
+		app.logCost(ctx, string(prov.Name()), req.Model, resp.Cost.Total, len(resp.Images))
+	}
+
+	if flagEditShow {
+		if !display.IsTerminalSupported() {
+			fmt.Fprintln(app.Err, "Warning: terminal may not support Kitty graphics protocol")
+		}
+		displayer := app.NewDisplayer(app.Out)
+		if err := displayer.DisplayAll(ctx, resp); err != nil {
+			fmt.Fprintf(app.Err, "Warning: failed to display image: %v\n", err)
 		}
 	}
 
 	fmt.Fprintln(app.Out, "Done!")
+	return nil
+}
+
+// Describe command
+
+func newDescribeCmd(app *App) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "describe <image...>",
+		Short: "Describe or analyze images using AI vision",
+		Long: `Analyze images using OpenAI's vision API. Supports multiple images for comparison.
+
+Unlike OCR (text extraction), describe provides general visual understanding:
+image captioning, object identification, chart analysis, visual Q&A.
+
+Examples:
+  imggen describe photo.png
+  imggen describe photo.png -p "what color is the car?"
+  imggen describe a.png b.png -p "compare these designs"
+  imggen describe --url https://example.com/photo.png`,
+		Args: func(cmd *cobra.Command, args []string) error {
+			if flagDescribeURL != "" {
+				return nil
+			}
+			return cobra.MinimumNArgs(1)(cmd, args)
+		},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runDescribe(cmd, args, app)
+		},
+	}
+
+	cmd.Flags().StringVarP(&flagDescribeModel, "model", "m", "gpt-5.2", "model to use (gpt-5.2, gpt-5-mini, gpt-5-nano)")
+	cmd.Flags().StringVarP(&flagDescribePrompt, "prompt", "p", "", "question or instruction about the image")
+	cmd.Flags().StringVarP(&flagDescribeOutput, "output", "o", "", "save output to file")
+	cmd.Flags().StringVar(&flagDescribeURL, "url", "", "image URL instead of file path")
+	cmd.Flags().BoolVar(&flagDescribeDetail, "detail", false, "request detailed analysis")
+	cmd.Flags().StringVar(&flagAPIKey, "api-key", "", "API key (defaults to OPENAI_API_KEY)")
+	cmd.Flags().BoolVarP(&flagVerbose, "verbose", "v", false, "log HTTP requests and responses")
+
+	return cmd
+}
+
+func runDescribe(_ *cobra.Command, args []string, app *App) error {
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
+
+	apiKey, _, err := keys.GetAPIKey(flagAPIKey, "openai", "OPENAI_API_KEY")
+	if err != nil {
+		return err
+	}
+
+	providerCfg := &provider.Config{APIKey: apiKey, Verbose: flagVerbose}
+	prov, err := app.NewProvider(providerCfg, app.Registry)
+	if err != nil {
+		return fmt.Errorf("failed to create provider: %w", err)
+	}
+
+	ocrProv, ok := prov.(provider.OCRProvider)
+	if !ok {
+		return fmt.Errorf("provider does not support vision analysis")
+	}
+
+	req := models.NewOCRRequest()
+	req.Model = flagDescribeModel
+
+	multiImage := len(args) > 1 || (len(args) > 0 && flagDescribeURL != "")
+
+	if flagDescribeURL != "" {
+		if multiImage {
+			req.ImageURLs = []string{flagDescribeURL}
+		} else {
+			req.ImageURL = flagDescribeURL
+		}
+	}
+
+	if len(args) > 0 {
+		for _, path := range args {
+			if _, err := os.Stat(path); os.IsNotExist(err) {
+				return fmt.Errorf("image file not found: %s", path)
+			}
+		}
+		if multiImage {
+			req.ImagePaths = args
+		} else {
+			req.ImagePath = args[0]
+		}
+	}
+
+	prompt := flagDescribePrompt
+	if prompt == "" {
+		if multiImage {
+			prompt = "Analyze and compare these images. Describe each one and highlight key similarities and differences."
+		} else if flagDescribeDetail {
+			prompt = "Provide a comprehensive analysis of this image. Include: subject matter, composition, colors, lighting, mood, style, notable details, and any text visible."
+		} else {
+			prompt = "Describe this image in detail. Include the subject, setting, colors, composition, mood, and any notable details."
+		}
+	}
+	req.Prompt = prompt
+
+	sourceDesc := "image"
+	if multiImage {
+		sourceDesc = fmt.Sprintf("%d images", len(args))
+		if flagDescribeURL != "" {
+			sourceDesc = fmt.Sprintf("%d images", len(args)+1)
+		}
+	} else if flagDescribeURL != "" {
+		sourceDesc = flagDescribeURL
+	} else if len(args) > 0 {
+		sourceDesc = args[0]
+	}
+	app.warnPremiumModel(req.Model)
+	fmt.Fprintf(app.Out, "Analyzing %s with %s...\n", sourceDesc, req.Model)
+
+	resp, err := ocrProv.OCR(ctx, req)
+	if err != nil {
+		return fmt.Errorf("analysis failed: %w", err)
+	}
+
+	output := resp.Text
+
+	if flagDescribeOutput != "" {
+		if err := os.WriteFile(flagDescribeOutput, []byte(output), 0644); err != nil {
+			return fmt.Errorf("failed to write output file: %w", err)
+		}
+		fmt.Fprintf(app.Out, "Output saved to: %s\n", flagDescribeOutput)
+	} else {
+		fmt.Fprintln(app.Out, "")
+		fmt.Fprintln(app.Out, output)
+	}
+
+	if resp.Cost != nil {
+		fmt.Fprintf(app.Out, "\nCost: $%.6f (input: %d tokens, output: %d tokens)\n",
+			resp.Cost.Total, resp.InputTokens, resp.OutputTokens)
+		app.logCost(ctx, "openai", req.Model, resp.Cost.Total, 1)
+	}
+
 	return nil
 }
 
