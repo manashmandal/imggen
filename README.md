@@ -9,7 +9,9 @@
 > **Note:** Currently only OpenAI is supported. Other providers (Stability AI, etc.) are work in progress.
 
 **Features:**
-- Image generation (DALL-E 2, DALL-E 3, GPT-Image-1)
+- Image generation (DALL-E 2, DALL-E 3, GPT-Image-1, GPT-Image-1.5)
+- Image editing (inpainting, background removal)
+- Image analysis/description (vision AI)
 - Video generation (Sora)
 - OCR with structured output
 - Batch processing
@@ -66,6 +68,15 @@ imggen -S "a cute cat"
 
 # Interactive mode for iterative editing
 imggen -i
+
+# Image editing
+imggen edit photo.png "make the sky purple"
+imggen edit photo.png --mask mask.png "replace the sign text"
+imggen edit photo.png --bg-remove
+
+# Image analysis
+imggen describe photo.png
+imggen describe a.png b.png -p "compare these designs"
 ```
 
 ## Video Generation
@@ -98,6 +109,70 @@ imggen video -s 1280x720 -o myvideo.mp4 "dancing robot"
 | `--output` | `-o` | Output filename | auto-generated |
 | `--api-key` | | API key | OPENAI_API_KEY |
 | `--verbose` | `-v` | Log HTTP requests | false |
+
+## Image Editing
+
+Edit existing images using OpenAI's image editing API:
+
+```bash
+# Basic editing with text instruction
+imggen edit photo.png "make the sky purple"
+
+# Inpainting with mask (transparent areas get edited)
+imggen edit photo.png --mask region.png "replace text with ACME"
+
+# Background removal
+imggen edit photo.png --bg-remove
+imggen edit photo.png --bg-remove -o transparent.png -f png
+
+# Multiple variations
+imggen edit photo.png -n 3 "make it look like a watercolor painting"
+```
+
+### Edit Flags
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--model` | `-m` | Model (gpt-image-1.5, gpt-image-1, dall-e-2) | gpt-image-1.5 |
+| `--mask` | | Mask image for inpainting (PNG with alpha) | |
+| `--bg-remove` | | Remove background (no prompt needed) | false |
+| `--size` | `-s` | Output size | model default |
+| `--quality` | `-q` | Quality (auto, low, medium, high) | |
+| `--count` | `-n` | Number of variations | 1 |
+| `--output` | `-o` | Output filename or directory | auto-generated |
+| `--format` | `-f` | Output format (png, jpeg, webp) | png |
+| `--show` | `-S` | Display result in terminal | false |
+
+## Image Analysis (Describe)
+
+Analyze and describe images using AI vision:
+
+```bash
+# Basic image description
+imggen describe photo.png
+
+# Ask a specific question
+imggen describe photo.png -p "what color is the car?"
+
+# Compare multiple images
+imggen describe a.png b.png -p "compare these designs"
+
+# Analyze from URL
+imggen describe --url https://example.com/photo.png
+
+# Detailed analysis
+imggen describe photo.png --detail -o analysis.txt
+```
+
+### Describe Flags
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--model` | `-m` | Model (gpt-5.2, gpt-5-mini, gpt-5-nano) | gpt-5-mini |
+| `--prompt` | `-p` | Question or instruction about the image | auto |
+| `--output` | `-o` | Save output to file | stdout |
+| `--url` | | Image URL instead of file path | |
+| `--detail` | | Request detailed analysis | false |
 
 ## Interactive Mode
 
@@ -302,7 +377,7 @@ imggen ocr document.png --suggest-schema -o suggested_schema.json
 
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
-| `--model` | `-m` | Model to use (gpt-image-1, dall-e-3, dall-e-2) | gpt-image-1 |
+| `--model` | `-m` | Model to use (gpt-image-1.5, gpt-image-1, dall-e-3, dall-e-2) | gpt-image-1.5 |
 | `--size` | `-s` | Image size (e.g., 1024x1024) | model default |
 | `--quality` | `-q` | Quality level | model default |
 | `--count` | `-n` | Number of images | 1 |

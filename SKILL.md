@@ -1,18 +1,18 @@
 ---
 name: imggen
-description: Use this skill when users want to generate images using OpenAI's image generation API (DALL-E or gpt-image-1), or extract text from images using OCR. Invoke when users request AI-generated images, artwork, logos, illustrations, visual content from text prompts, or need to extract text/data from images.
-version: 1.1.0
+description: Use this skill when users want to generate images, edit images, analyze/describe images, generate videos, or extract text from images using OpenAI's APIs. Invoke when users request AI-generated images, image editing, background removal, visual analysis, video generation, artwork, logos, illustrations, visual content from text prompts, or need to extract text/data from images.
+version: 1.2.0
 allowed-tools: Bash(imggen:*), Read, Write
 model: inherit
 ---
 
-# imggen - OpenAI Image Generation and OCR CLI
+# imggen - OpenAI Image Generation, Editing, Analysis, Video, and OCR CLI
 
 Generate images from text prompts and extract text from images using OpenAI's APIs.
 
 ## Overview
 
-`imggen` is a command-line tool that interfaces with OpenAI's image generation API. It supports multiple models (gpt-image-1, dall-e-3, dall-e-2) and provides options for image size, quality, format, and style.
+`imggen` is a command-line tool that interfaces with OpenAI's image generation API. It supports multiple models (gpt-image-1.5, gpt-image-1, dall-e-3, dall-e-2) and provides options for image size, quality, format, and style. It also supports image editing, vision-based image analysis, video generation, and OCR.
 
 ## Prerequisites
 
@@ -30,7 +30,7 @@ imggen [flags] "prompt"
 
 | Flag | Short | Default | Description |
 |------|-------|---------|-------------|
-| `--model` | `-m` | `gpt-image-1` | Model: gpt-image-1, dall-e-3, dall-e-2 |
+| `--model` | `-m` | `gpt-image-1.5` | Model: gpt-image-1.5, gpt-image-1, dall-e-3, dall-e-2 |
 | `--size` | `-s` | `1024x1024` | Image dimensions |
 | `--quality` | `-q` | `auto` | Quality level |
 | `--count` | `-n` | `1` | Number of images (1-10 for gpt-image-1, 1 for dall-e-3) |
@@ -44,7 +44,13 @@ imggen [flags] "prompt"
 
 ## Model-Specific Parameters
 
-### gpt-image-1 (Default, Recommended)
+### gpt-image-1.5 (Default, Recommended)
+- **Sizes**: 1024x1024, 1536x1024 (landscape), 1024x1536 (portrait), auto
+- **Quality**: auto, low, medium, high
+- **Max images**: 10 per request
+- **Supports**: Transparent backgrounds, multiple output formats, editing
+
+### gpt-image-1
 - **Sizes**: 1024x1024, 1536x1024 (landscape), 1024x1536 (portrait), auto
 - **Quality**: auto, low, medium, high
 - **Max images**: 10 per request
@@ -67,6 +73,10 @@ imggen [flags] "prompt"
 3. Execute the command using Bash tool
 4. Report the generated filename and any revised prompt returned by the API
 5. If the user wants to view the image, use Read tool on the generated file
+6. For image editing, use the `edit` subcommand with the image path and prompt
+7. For background removal, use `edit --bg-remove` (no prompt needed, output defaults to PNG)
+8. For image analysis, use the `describe` subcommand with one or more image paths
+9. For video generation, use the `video` subcommand with a prompt
 
 ## Output Format
 
@@ -223,13 +233,132 @@ abstract geometric art
 | Flag | Short | Default | Description |
 |------|-------|---------|-------------|
 | `--output` | `-o` | current dir | Output directory |
-| `--model` | `-m` | `gpt-image-1` | Default model |
+| `--model` | `-m` | `gpt-image-1.5` | Default model |
 | `--size` | `-s` | model default | Default image size |
 | `--quality` | `-q` | model default | Default quality level |
 | `--format` | `-f` | `png` | Output format |
 | `--parallel` | `-p` | `1` | Number of parallel workers |
 | `--stop-on-error` | | `false` | Stop on first error |
 | `--delay` | | `0` | Delay between requests (ms) |
+
+## Video Generation
+
+Generate videos using OpenAI's Sora API:
+
+### Video Usage
+
+```bash
+imggen video <prompt> [flags]
+```
+
+### Video Models
+
+| Model | Duration | Sizes | Cost |
+|-------|----------|-------|------|
+| sora-2 (default) | 4, 8, 12 sec | 720x1280, 1280x720, 1024x1792, 1792x1024 | $0.10/sec |
+| sora-2-pro | 4, 8, 12, 16, 20 sec | Above + 1080x1920, 1920x1080 | $0.30/sec |
+
+### Video Flags
+
+| Flag | Short | Default | Description |
+|------|-------|---------|-------------|
+| `--model` | `-m` | `sora-2` | Model (sora-2, sora-2-pro) |
+| `--duration` | `-d` | model default | Duration in seconds |
+| `--size` | `-s` | `720x1280` | Video size (e.g., 1280x720) |
+| `--output` | `-o` | auto-generated | Output filename |
+| `--api-key` | | `$OPENAI_API_KEY` | Override API key |
+| `--verbose` | `-v` | `false` | Log HTTP requests |
+
+### Video Examples
+
+```bash
+# Basic video generation
+imggen video "a cat walking on a beach"
+
+# With options
+imggen video -m sora-2-pro -d 8 "sunset over mountains"
+imggen video -s 1280x720 -o myvideo.mp4 "dancing robot"
+```
+
+## Image Editing
+
+Edit existing images with text instructions, inpainting with masks, and background removal.
+
+### Edit Usage
+
+```bash
+imggen edit <image> [prompt] [flags]
+```
+
+### Edit Flags
+
+| Flag | Short | Default | Description |
+|------|-------|---------|-------------|
+| `--model` | `-m` | `gpt-image-1.5` | Model (gpt-image-1.5, gpt-image-1, dall-e-2) |
+| `--size` | `-s` | model default | Output size (e.g., 1024x1024) |
+| `--quality` | `-q` | | Quality level (auto, low, medium, high) |
+| `--count` | `-n` | `1` | Number of edit variations |
+| `--output` | `-o` | auto-generated | Output filename or directory |
+| `--format` | `-f` | `png` | Output format (png, jpeg, webp) |
+| `--mask` | | | Mask image for inpainting (PNG with alpha channel) |
+| `--bg-remove` | | `false` | Remove background (no prompt needed) |
+| `--show` | `-S` | `false` | Display result in terminal |
+
+### Edit Examples
+
+```bash
+# Basic image editing
+imggen edit photo.png "make the sky purple"
+
+# Inpainting with mask
+imggen edit photo.png --mask region.png "replace text with ACME"
+
+# Background removal
+imggen edit photo.png --bg-remove
+imggen edit photo.png --bg-remove -o transparent.png
+
+# Multiple variations
+imggen edit photo.png -n 3 "make it look like a painting"
+```
+
+## Image Analysis (Describe)
+
+Analyze and describe images using AI vision. Unlike OCR (text extraction), describe provides general visual understanding: captioning, object identification, chart analysis, visual Q&A, and multi-image comparison.
+
+### Describe Usage
+
+```bash
+imggen describe <image...> [flags]
+```
+
+### Describe Flags
+
+| Flag | Short | Default | Description |
+|------|-------|---------|-------------|
+| `--model` | `-m` | `gpt-5-mini` | Model (gpt-5.2, gpt-5-mini, gpt-5-nano) |
+| `--prompt` | `-p` | auto | Question or instruction about the image |
+| `--output` | `-o` | stdout | Save output to file |
+| `--url` | | | Image URL instead of file path |
+| `--detail` | | `false` | Request detailed analysis |
+
+### Describe Examples
+
+```bash
+# Basic image description
+imggen describe photo.png
+
+# Ask a specific question
+imggen describe photo.png -p "what color is the car?"
+
+# Compare multiple images
+imggen describe a.png b.png -p "compare these designs"
+
+# Analyze from URL
+imggen describe --url https://example.com/photo.png
+
+# Detailed analysis saved to file
+imggen describe photo.png --detail -o analysis.txt
+```
 
 ## Error Handling
 
@@ -239,10 +368,19 @@ Common errors and solutions:
 - **"supports maximum N images"**: Reduce `--count` value
 - **"does not support --style"**: Only dall-e-3 supports style flag
 - **"does not support --transparent"**: Only gpt-image-1 supports transparency
+- **"does not support editing"**: Use a model that supports editing (gpt-image-1.5, gpt-image-1, dall-e-2)
+- **"provider does not support vision analysis"**: Ensure using OpenAI provider for describe command
 
 ## Pricing Reference
 
 Costs per image (USD):
+
+### gpt-image-1.5
+| Size | Low | Medium | High |
+|------|-----|--------|------|
+| 1024x1024 | $0.011 | $0.042 | $0.167 |
+| 1536x1024 | $0.016 | $0.063 | $0.250 |
+| 1024x1536 | $0.016 | $0.063 | $0.250 |
 
 ### gpt-image-1
 | Size | Low | Medium | High |
