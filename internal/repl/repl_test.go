@@ -3,6 +3,7 @@ package repl
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -919,5 +920,458 @@ func TestCostCommand_DefaultWithoutArgs(t *testing.T) {
 	output := out.String()
 	if !strings.Contains(output, "Total cost:") {
 		t.Error("cost without args did not default to total")
+	}
+}
+
+// ResponsesProvider mock and tests
+
+type mockResponsesProvider struct {
+	generateFunc func(ctx context.Context, req *models.ResponsesRequest) (*models.ResponsesResponse, error)
+	lastRequest  *models.ResponsesRequest
+}
+
+func (m *mockResponsesProvider) GenerateWithResponses(ctx context.Context, req *models.ResponsesRequest) (*models.ResponsesResponse, error) {
+	m.lastRequest = req
+	if m.generateFunc != nil {
+		return m.generateFunc(ctx, req)
+	}
+	return &models.ResponsesResponse{
+		ID:     "resp_test123",
+		Images: []models.GeneratedImage{{Data: []byte("fake-png-data")}},
+		Cost:   &models.CostInfo{PerImage: 0.042, Total: 0.042, Currency: "usd"},
+	}, nil
+}
+
+func testREPLWithResponses(t *testing.T, input string, respProvider *mockResponsesProvider) (*REPL, *bytes.Buffer, *bytes.Buffer, *session.Manager, func()) {
+	t.Helper()
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpDir)
+
+	store, err := session.NewStoreWithPath(dbPath)
+	if err != nil {
+		t.Fatalf("NewStoreWithPath() error = %v", err)
+	}
+
+	mgr := session.NewManager(store, "gpt-image-1")
+	out := &bytes.Buffer{}
+	errBuf := &bytes.Buffer{}
+
+	cfg := &Config{
+		In:                strings.NewReader(input),
+		Out:               out,
+		Err:               errBuf,
+		Provider:          &mockProvider{},
+		Registry:          models.DefaultRegistry(),
+		SessionMgr:        mgr,
+		Displayer:         display.New(out),
+		Saver:             image.NewSaver(),
+		ResponsesProvider: respProvider,
+	}
+
+	r := New(cfg)
+
+	cleanup := func() {
+		store.Close()
+		os.Setenv("HOME", origHome)
+	}
+
+	return r, out, errBuf, mgr, cleanup
+}
+
+func TestGenerateCommand_ExecuteWithResponses_Success(t *testing.T) {
+	mock := &mockResponsesProvider{}
+	r, out, _, mgr, cleanup := testREPLWithResponses(t, "", mock)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	cmd := &GenerateCommand{}
+	err := cmd.Execute(ctx, r, []string{"a", "beautiful", "sunset"})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	output := out.String()
+	if !strings.Contains(output, "Responses API") {
+		t.Error("expected output to mention Responses API")
+	}
+	if !strings.Contains(output, "Saved:") {
+		t.Error("expected output to contain 'Saved:'")
+	}
+	if !strings.Contains(output, "Cost: $0.0420") {
+		t.Errorf("expected cost output, got: %s", output)
+	}
+
+	if !mgr.HasIteration() {
+		t.Error("expected session to have an iteration after generate")
+	}
+
+	iter := mgr.CurrentIteration()
+	if iter.Operation != "generate" {
+		t.Errorf("iteration operation = %s, want generate", iter.Operation)
+	}
+	if iter.Prompt != "a beautiful sunset" {
+		t.Errorf("iteration prompt = %q, want %q", iter.Prompt, "a beautiful sunset")
+	}
+	if iter.Model != "gpt-image-1" {
+		t.Errorf("iteration model = %s, want gpt-image-1", iter.Model)
+	}
+	if iter.Metadata.Provider != "openai" {
+		t.Errorf("iteration provider = %s, want openai", iter.Metadata.Provider)
+	}
+	if iter.ImagePath == "" {
+		t.Error("iteration image path should not be empty")
+	}
+
+	if _, err := os.Stat(iter.ImagePath); os.IsNotExist(err) {
+		t.Errorf("image file was not saved at %s", iter.ImagePath)
+	}
+}
+
+func TestGenerateCommand_ExecuteWithResponses_FallbackOnError(t *testing.T) {
+	mock := &mockResponsesProvider{
+		generateFunc: func(_ context.Context, _ *models.ResponsesRequest) (*models.ResponsesResponse, error) {
+			return nil, fmt.Errorf("API unavailable")
+		},
+	}
+	r, out, errBuf, mgr, cleanup := testREPLWithResponses(t, "", mock)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	cmd := &GenerateCommand{}
+	err := cmd.Execute(ctx, r, []string{"test", "prompt"})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	errOutput := errBuf.String()
+	if !strings.Contains(errOutput, "Responses API failed") {
+		t.Errorf("expected fallback warning on stderr, got: %s", errOutput)
+	}
+	if !strings.Contains(errOutput, "API unavailable") {
+		t.Errorf("expected original error in fallback message, got: %s", errOutput)
+	}
+
+	outStr := out.String()
+	if !strings.Contains(outStr, "Saved:") {
+		t.Errorf("expected Images API fallback to save image, got: %s", outStr)
+	}
+
+	if !mgr.HasIteration() {
+		t.Error("expected fallback to Images API to create an iteration")
+	}
+}
+
+func TestGenerateCommand_ExecuteWithResponses_SetsLastResponseID(t *testing.T) {
+	mock := &mockResponsesProvider{
+		generateFunc: func(_ context.Context, _ *models.ResponsesRequest) (*models.ResponsesResponse, error) {
+			return &models.ResponsesResponse{
+				ID:     "resp_abc456",
+				Images: []models.GeneratedImage{{Data: []byte("fake-png")}},
+			}, nil
+		},
+	}
+	r, _, _, _, cleanup := testREPLWithResponses(t, "", mock)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	cmd := &GenerateCommand{}
+	if err := cmd.Execute(ctx, r, []string{"test"}); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	if r.lastResponseID != "resp_abc456" {
+		t.Errorf("lastResponseID = %q, want %q", r.lastResponseID, "resp_abc456")
+	}
+}
+
+func TestGenerateCommand_ExecuteWithResponses_PassesPreviousResponseID(t *testing.T) {
+	mock := &mockResponsesProvider{}
+	r, _, _, _, cleanup := testREPLWithResponses(t, "", mock)
+	defer cleanup()
+
+	ctx := context.Background()
+	r.lastResponseID = "resp_previous_999"
+
+	cmd := &GenerateCommand{}
+	if err := cmd.Execute(ctx, r, []string{"follow", "up", "prompt"}); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	if mock.lastRequest == nil {
+		t.Fatal("expected mock to capture the request")
+	}
+	if mock.lastRequest.PreviousResponseID != "resp_previous_999" {
+		t.Errorf("PreviousResponseID = %q, want %q", mock.lastRequest.PreviousResponseID, "resp_previous_999")
+	}
+	if mock.lastRequest.Action != "auto" {
+		t.Errorf("Action = %q, want %q (should be 'auto' when lastResponseID is set)", mock.lastRequest.Action, "auto")
+	}
+}
+
+func TestGenerateCommand_ExecuteWithResponses_GenerateActionWhenNoHistory(t *testing.T) {
+	mock := &mockResponsesProvider{}
+	r, _, _, _, cleanup := testREPLWithResponses(t, "", mock)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	cmd := &GenerateCommand{}
+	if err := cmd.Execute(ctx, r, []string{"first", "prompt"}); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	if mock.lastRequest == nil {
+		t.Fatal("expected mock to capture the request")
+	}
+	if mock.lastRequest.PreviousResponseID != "" {
+		t.Errorf("PreviousResponseID = %q, want empty string", mock.lastRequest.PreviousResponseID)
+	}
+	if mock.lastRequest.Action != "generate" {
+		t.Errorf("Action = %q, want %q", mock.lastRequest.Action, "generate")
+	}
+}
+
+func TestGenerateCommand_ExecuteWithResponses_NoImages(t *testing.T) {
+	mock := &mockResponsesProvider{
+		generateFunc: func(_ context.Context, _ *models.ResponsesRequest) (*models.ResponsesResponse, error) {
+			return &models.ResponsesResponse{
+				ID:     "resp_empty",
+				Images: []models.GeneratedImage{},
+			}, nil
+		},
+	}
+	r, _, _, _, cleanup := testREPLWithResponses(t, "", mock)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	cmd := &GenerateCommand{}
+	err := cmd.Execute(ctx, r, []string{"test"})
+	if err == nil {
+		t.Fatal("expected error when no images returned")
+	}
+	if !strings.Contains(err.Error(), "no image generated") {
+		t.Errorf("error = %q, want 'no image generated'", err.Error())
+	}
+}
+
+func TestGenerateCommand_ExecuteWithResponses_NilCost(t *testing.T) {
+	mock := &mockResponsesProvider{
+		generateFunc: func(_ context.Context, _ *models.ResponsesRequest) (*models.ResponsesResponse, error) {
+			return &models.ResponsesResponse{
+				ID:     "resp_nocost",
+				Images: []models.GeneratedImage{{Data: []byte("image-data")}},
+				Cost:   nil,
+			}, nil
+		},
+	}
+	r, out, _, _, cleanup := testREPLWithResponses(t, "", mock)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	cmd := &GenerateCommand{}
+	if err := cmd.Execute(ctx, r, []string{"test"}); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	output := out.String()
+	if strings.Contains(output, "Cost:") {
+		t.Error("should not print cost line when Cost is nil")
+	}
+}
+
+func TestGenerateCommand_ExecuteWithResponses_CostLogging(t *testing.T) {
+	mock := &mockResponsesProvider{
+		generateFunc: func(_ context.Context, _ *models.ResponsesRequest) (*models.ResponsesResponse, error) {
+			return &models.ResponsesResponse{
+				ID:     "resp_withcost",
+				Images: []models.GeneratedImage{{Data: []byte("image-data")}},
+				Cost:   &models.CostInfo{PerImage: 0.080, Total: 0.080, Currency: "usd"},
+			}, nil
+		},
+	}
+	r, _, _, mgr, cleanup := testREPLWithResponses(t, "", mock)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	cmd := &GenerateCommand{}
+	if err := cmd.Execute(ctx, r, []string{"expensive", "prompt"}); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	summary, err := mgr.GetTotalCost(ctx)
+	if err != nil {
+		t.Fatalf("GetTotalCost() error = %v", err)
+	}
+	if summary.TotalCost != 0.080 {
+		t.Errorf("total cost = %f, want 0.080", summary.TotalCost)
+	}
+}
+
+func TestGenerateCommand_ExecuteWithResponses_RevisedPrompt(t *testing.T) {
+	mock := &mockResponsesProvider{
+		generateFunc: func(_ context.Context, _ *models.ResponsesRequest) (*models.ResponsesResponse, error) {
+			return &models.ResponsesResponse{
+				ID:            "resp_revised",
+				Images:        []models.GeneratedImage{{Data: []byte("image-data")}},
+				RevisedPrompt: "enhanced sunset over mountains",
+			}, nil
+		},
+	}
+	r, _, _, mgr, cleanup := testREPLWithResponses(t, "", mock)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	cmd := &GenerateCommand{}
+	if err := cmd.Execute(ctx, r, []string{"sunset"}); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	iter := mgr.CurrentIteration()
+	if iter.RevisedPrompt != "enhanced sunset over mountains" {
+		t.Errorf("revised prompt = %q, want %q", iter.RevisedPrompt, "enhanced sunset over mountains")
+	}
+}
+
+func TestGenerateCommand_ExecuteWithResponses_ChainedResponses(t *testing.T) {
+	callCount := 0
+	mock := &mockResponsesProvider{
+		generateFunc: func(_ context.Context, req *models.ResponsesRequest) (*models.ResponsesResponse, error) {
+			callCount++
+			return &models.ResponsesResponse{
+				ID:     fmt.Sprintf("resp_chain_%d", callCount),
+				Images: []models.GeneratedImage{{Data: []byte("image-data")}},
+			}, nil
+		},
+	}
+	r, _, _, _, cleanup := testREPLWithResponses(t, "", mock)
+	defer cleanup()
+
+	ctx := context.Background()
+	cmd := &GenerateCommand{}
+
+	if err := cmd.Execute(ctx, r, []string{"first"}); err != nil {
+		t.Fatalf("first Execute() error = %v", err)
+	}
+	if r.lastResponseID != "resp_chain_1" {
+		t.Errorf("after first call: lastResponseID = %q, want %q", r.lastResponseID, "resp_chain_1")
+	}
+
+	if err := cmd.Execute(ctx, r, []string{"second"}); err != nil {
+		t.Fatalf("second Execute() error = %v", err)
+	}
+	if mock.lastRequest.PreviousResponseID != "resp_chain_1" {
+		t.Errorf("second call PreviousResponseID = %q, want %q", mock.lastRequest.PreviousResponseID, "resp_chain_1")
+	}
+	if r.lastResponseID != "resp_chain_2" {
+		t.Errorf("after second call: lastResponseID = %q, want %q", r.lastResponseID, "resp_chain_2")
+	}
+}
+
+func TestGenerateCommand_ExecuteWithImagesAPI_Success(t *testing.T) {
+	r, out, mgr, cleanup := testREPL(t, "")
+	defer cleanup()
+
+	ctx := context.Background()
+
+	cmd := &GenerateCommand{}
+	err := cmd.Execute(ctx, r, []string{"a", "test", "image"})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	output := out.String()
+	if !strings.Contains(output, "Generating with gpt-image-1...") {
+		t.Errorf("expected Images API output, got: %s", output)
+	}
+	if !strings.Contains(output, "Saved:") {
+		t.Error("expected 'Saved:' in output")
+	}
+
+	if !mgr.HasIteration() {
+		t.Error("expected iteration to be created")
+	}
+	iter := mgr.CurrentIteration()
+	if iter.Operation != "generate" {
+		t.Errorf("iteration operation = %s, want generate", iter.Operation)
+	}
+	if iter.Prompt != "a test image" {
+		t.Errorf("iteration prompt = %q, want %q", iter.Prompt, "a test image")
+	}
+}
+
+func TestGenerateCommand_ExecuteWithImagesAPI_UnknownModel(t *testing.T) {
+	r, _, mgr, cleanup := testREPL(t, "")
+	defer cleanup()
+
+	ctx := context.Background()
+	mgr.SetModel("nonexistent-model")
+
+	cmd := &GenerateCommand{}
+	err := cmd.Execute(ctx, r, []string{"test"})
+	if err == nil {
+		t.Fatal("expected error for unknown model")
+	}
+	if !strings.Contains(err.Error(), "unknown model") {
+		t.Errorf("error = %q, want 'unknown model'", err.Error())
+	}
+}
+
+func TestGenerateCommand_ExecuteWithImagesAPI_ProviderError(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpDir)
+
+	store, err := session.NewStoreWithPath(dbPath)
+	if err != nil {
+		t.Fatalf("NewStoreWithPath() error = %v", err)
+	}
+
+	mgr := session.NewManager(store, "gpt-image-1")
+	out := &bytes.Buffer{}
+	errBuf := &bytes.Buffer{}
+
+	failingProvider := &mockProvider{
+		generateFunc: func(_ context.Context, _ *models.Request) (*models.Response, error) {
+			return nil, fmt.Errorf("API rate limited")
+		},
+	}
+
+	cfg := &Config{
+		In:         strings.NewReader(""),
+		Out:        out,
+		Err:        errBuf,
+		Provider:   failingProvider,
+		Registry:   models.DefaultRegistry(),
+		SessionMgr: mgr,
+		Displayer:  display.New(out),
+		Saver:      image.NewSaver(),
+	}
+
+	r := New(cfg)
+	defer func() {
+		store.Close()
+		os.Setenv("HOME", origHome)
+	}()
+
+	ctx := context.Background()
+	cmd := &GenerateCommand{}
+	genErr := cmd.Execute(ctx, r, []string{"test"})
+	if genErr == nil {
+		t.Fatal("expected error from failing provider")
+	}
+	if !strings.Contains(genErr.Error(), "generation failed") {
+		t.Errorf("error = %q, want 'generation failed'", genErr.Error())
 	}
 }

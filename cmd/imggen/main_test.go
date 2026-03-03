@@ -131,6 +131,22 @@ func resetFlags() {
 	flagWorkflowQuality = ""
 	flagWorkflowFormat = "png"
 	flagWorkflowParams = nil
+	// Edit flags
+	flagEditModel = "gpt-image-1.5"
+	flagEditSize = ""
+	flagEditQuality = ""
+	flagEditCount = 1
+	flagEditOutput = ""
+	flagEditFormat = "png"
+	flagEditMask = ""
+	flagEditBgRemove = false
+	flagEditShow = false
+	// Describe flags
+	flagDescribeModel = "gpt-5.2"
+	flagDescribePrompt = ""
+	flagDescribeOutput = ""
+	flagDescribeURL = ""
+	flagDescribeDetail = false
 }
 
 // newTestApp creates an App configured for testing.
@@ -3110,5 +3126,314 @@ func TestRunVideo_ProviderCreationError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "failed to create provider") {
 		t.Errorf("error = %v, want provider creation error", err)
+	}
+}
+
+func TestWarnPremiumModel(t *testing.T) {
+	tests := []struct {
+		name       string
+		model      string
+		wantOutput bool
+	}{
+		{
+			name:       "gpt-5.2 triggers warning",
+			model:      "gpt-5.2",
+			wantOutput: true,
+		},
+		{
+			name:       "sora-2-pro triggers warning",
+			model:      "sora-2-pro",
+			wantOutput: true,
+		},
+		{
+			name:       "gpt-5-mini no warning",
+			model:      "gpt-5-mini",
+			wantOutput: false,
+		},
+		{
+			name:       "sora-2 no warning",
+			model:      "sora-2",
+			wantOutput: false,
+		},
+		{
+			name:       "gpt-image-1.5 no warning",
+			model:      "gpt-image-1.5",
+			wantOutput: false,
+		},
+		{
+			name:       "empty model no warning",
+			model:      "",
+			wantOutput: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			errBuf := &bytes.Buffer{}
+			app := &App{
+				Out:      &bytes.Buffer{},
+				Err:      errBuf,
+				Registry: models.DefaultRegistry(),
+			}
+
+			app.warnPremiumModel(tt.model)
+
+			got := errBuf.String()
+			if tt.wantOutput && got == "" {
+				t.Errorf("warnPremiumModel(%q) produced no output, want warning", tt.model)
+			}
+			if !tt.wantOutput && got != "" {
+				t.Errorf("warnPremiumModel(%q) produced output %q, want none", tt.model, got)
+			}
+			if tt.wantOutput {
+				if !strings.Contains(got, "Warning") {
+					t.Errorf("warnPremiumModel(%q) output %q does not contain 'Warning'", tt.model, got)
+				}
+				if !strings.Contains(got, "premium model") {
+					t.Errorf("warnPremiumModel(%q) output %q does not contain 'premium model'", tt.model, got)
+				}
+			}
+		})
+	}
+}
+
+func TestLogCostZero(t *testing.T) {
+	errBuf := &bytes.Buffer{}
+	app := &App{
+		Out:      &bytes.Buffer{},
+		Err:      errBuf,
+		Registry: models.DefaultRegistry(),
+	}
+
+	app.logCost(context.Background(), "openai", "gpt-image-1.5", 0, 1)
+
+	if errBuf.Len() > 0 {
+		t.Errorf("logCost with zero cost wrote to Err: %q", errBuf.String())
+	}
+}
+
+func TestLogCostNegative(t *testing.T) {
+	errBuf := &bytes.Buffer{}
+	app := &App{
+		Out:      &bytes.Buffer{},
+		Err:      errBuf,
+		Registry: models.DefaultRegistry(),
+	}
+
+	app.logCost(context.Background(), "openai", "gpt-image-1.5", -0.5, 1)
+
+	if errBuf.Len() > 0 {
+		t.Errorf("logCost with negative cost wrote to Err: %q", errBuf.String())
+	}
+}
+
+func TestEditCmdArgValidation(t *testing.T) {
+	resetFlags()
+
+	tests := []struct {
+		name        string
+		bgRemove    bool
+		args        []string
+		wantErr     bool
+	}{
+		{
+			name:     "two args without bg-remove succeeds",
+			bgRemove: false,
+			args:     []string{"image.png", "make it blue"},
+			wantErr:  false,
+		},
+		{
+			name:     "one arg without bg-remove fails",
+			bgRemove: false,
+			args:     []string{"image.png"},
+			wantErr:  true,
+		},
+		{
+			name:     "zero args without bg-remove fails",
+			bgRemove: false,
+			args:     []string{},
+			wantErr:  true,
+		},
+		{
+			name:     "three args without bg-remove fails",
+			bgRemove: false,
+			args:     []string{"a.png", "b.png", "c.png"},
+			wantErr:  true,
+		},
+		{
+			name:     "one arg with bg-remove succeeds",
+			bgRemove: true,
+			args:     []string{"image.png"},
+			wantErr:  false,
+		},
+		{
+			name:     "two args with bg-remove succeeds",
+			bgRemove: true,
+			args:     []string{"image.png", "extra"},
+			wantErr:  false,
+		},
+		{
+			name:     "zero args with bg-remove fails",
+			bgRemove: true,
+			args:     []string{},
+			wantErr:  true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resetFlags()
+
+			out := &bytes.Buffer{}
+			app := newTestApp(out)
+			cmd := newEditCmd(app)
+
+			if tt.bgRemove {
+				_ = cmd.Flags().Set("bg-remove", "true")
+			}
+
+			err := cmd.Args(cmd, tt.args)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("editCmd.Args(%v) error = %v, wantErr %v", tt.args, err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestDescribeCmdArgValidation(t *testing.T) {
+	resetFlags()
+
+	tests := []struct {
+		name    string
+		url     string
+		args    []string
+		wantErr bool
+	}{
+		{
+			name:    "one file arg succeeds",
+			url:     "",
+			args:    []string{"image.png"},
+			wantErr: false,
+		},
+		{
+			name:    "multiple file args succeed",
+			url:     "",
+			args:    []string{"a.png", "b.png", "c.png"},
+			wantErr: false,
+		},
+		{
+			name:    "zero args without url fails",
+			url:     "",
+			args:    []string{},
+			wantErr: true,
+		},
+		{
+			name:    "zero args with url succeeds",
+			url:     "https://example.com/photo.png",
+			args:    []string{},
+			wantErr: false,
+		},
+		{
+			name:    "one arg with url succeeds",
+			url:     "https://example.com/photo.png",
+			args:    []string{"local.png"},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resetFlags()
+
+			out := &bytes.Buffer{}
+			app := newTestApp(out)
+			cmd := newDescribeCmd(app)
+
+			if tt.url != "" {
+				_ = cmd.Flags().Set("url", tt.url)
+			}
+
+			err := cmd.Args(cmd, tt.args)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("describeCmd.Args(%v) error = %v, wantErr %v", tt.args, err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestEditCmdFlags(t *testing.T) {
+	resetFlags()
+	out := &bytes.Buffer{}
+	app := newTestApp(out)
+	cmd := newEditCmd(app)
+
+	expectedFlags := []string{
+		"model", "size", "quality", "count", "output",
+		"format", "mask", "bg-remove", "show", "api-key", "verbose",
+	}
+	for _, name := range expectedFlags {
+		if cmd.Flags().Lookup(name) == nil {
+			t.Errorf("edit command missing flag --%s", name)
+		}
+	}
+}
+
+func TestDescribeCmdFlags(t *testing.T) {
+	resetFlags()
+	out := &bytes.Buffer{}
+	app := newTestApp(out)
+	cmd := newDescribeCmd(app)
+
+	expectedFlags := []string{
+		"model", "prompt", "output", "url", "detail", "api-key", "verbose",
+	}
+	for _, name := range expectedFlags {
+		if cmd.Flags().Lookup(name) == nil {
+			t.Errorf("describe command missing flag --%s", name)
+		}
+	}
+}
+
+func TestPremiumModelsMap(t *testing.T) {
+	if _, ok := premiumModels["gpt-5.2"]; !ok {
+		t.Error("premiumModels missing gpt-5.2")
+	}
+	if _, ok := premiumModels["sora-2-pro"]; !ok {
+		t.Error("premiumModels missing sora-2-pro")
+	}
+
+	nonPremium := []string{"gpt-5-mini", "gpt-5-nano", "sora-2", "gpt-image-1.5", "gpt-image-1", "dall-e-3"}
+	for _, model := range nonPremium {
+		if _, ok := premiumModels[model]; ok {
+			t.Errorf("premiumModels should not contain %q", model)
+		}
+	}
+}
+
+func TestWarnPremiumModelContent(t *testing.T) {
+	tests := []struct {
+		model       string
+		wantContain string
+	}{
+		{"gpt-5.2", "gpt-5-mini"},
+		{"sora-2-pro", "sora-2"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.model, func(t *testing.T) {
+			errBuf := &bytes.Buffer{}
+			app := &App{
+				Out:      &bytes.Buffer{},
+				Err:      errBuf,
+				Registry: models.DefaultRegistry(),
+			}
+
+			app.warnPremiumModel(tt.model)
+
+			got := errBuf.String()
+			if !strings.Contains(got, tt.wantContain) {
+				t.Errorf("warnPremiumModel(%q) output %q does not suggest cheaper alternative %q", tt.model, got, tt.wantContain)
+			}
+		})
 	}
 }
