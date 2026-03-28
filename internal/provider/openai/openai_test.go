@@ -2085,3 +2085,291 @@ func floatEquals(a, b float64) bool {
 	const epsilon = 0.0001
 	return (a-b) < epsilon && (b-a) < epsilon
 }
+
+func TestProvider_buildAPIRequest_GPTImageMini(t *testing.T) {
+	p, _ := New(&provider.Config{APIKey: "test"}, models.DefaultRegistry())
+
+	req := &models.Request{
+		Model:       "gpt-image-1-mini",
+		Prompt:      "test prompt",
+		Count:       1,
+		Size:        "1024x1024",
+		Quality:     "medium",
+		Format:      models.FormatWebP,
+		Transparent: true,
+	}
+
+	apiReq := p.buildAPIRequest(req)
+
+	if apiReq.Model != "gpt-image-1-mini" {
+		t.Errorf("buildAPIRequest() Model = %v, want gpt-image-1-mini", apiReq.Model)
+	}
+	if apiReq.OutputFormat != "webp" {
+		t.Errorf("buildAPIRequest() OutputFormat = %v, want webp", apiReq.OutputFormat)
+	}
+	if apiReq.Background != "transparent" {
+		t.Errorf("buildAPIRequest() Background = %v, want transparent", apiReq.Background)
+	}
+	if apiReq.ResponseFormat != "" {
+		t.Errorf("buildAPIRequest() ResponseFormat should be empty for gpt-image-1-mini, got %v", apiReq.ResponseFormat)
+	}
+}
+
+func TestProvider_buildAPIRequest_WithCompression(t *testing.T) {
+	p, _ := New(&provider.Config{APIKey: "test"}, models.DefaultRegistry())
+
+	compression := 80
+	req := &models.Request{
+		Model:             "gpt-image-1",
+		Prompt:            "test prompt",
+		Count:             1,
+		Size:              "1024x1024",
+		OutputCompression: &compression,
+	}
+
+	apiReq := p.buildAPIRequest(req)
+
+	if apiReq.OutputCompression == nil {
+		t.Fatal("buildAPIRequest() OutputCompression should not be nil")
+	}
+	if *apiReq.OutputCompression != 80 {
+		t.Errorf("buildAPIRequest() OutputCompression = %d, want 80", *apiReq.OutputCompression)
+	}
+}
+
+func TestProvider_buildAPIRequest_WithModeration(t *testing.T) {
+	p, _ := New(&provider.Config{APIKey: "test"}, models.DefaultRegistry())
+
+	req := &models.Request{
+		Model:      "gpt-image-1",
+		Prompt:     "test prompt",
+		Count:      1,
+		Size:       "1024x1024",
+		Moderation: "low",
+	}
+
+	apiReq := p.buildAPIRequest(req)
+
+	if apiReq.Moderation != "low" {
+		t.Errorf("buildAPIRequest() Moderation = %v, want low", apiReq.Moderation)
+	}
+}
+
+func TestProvider_buildAPIRequest_CompressionIgnoredForDallE(t *testing.T) {
+	p, _ := New(&provider.Config{APIKey: "test"}, models.DefaultRegistry())
+
+	compression := 80
+	req := &models.Request{
+		Model:             "dall-e-3",
+		Prompt:            "test prompt",
+		Count:             1,
+		Size:              "1024x1024",
+		OutputCompression: &compression,
+		Moderation:        "low",
+	}
+
+	apiReq := p.buildAPIRequest(req)
+
+	if apiReq.OutputCompression != nil {
+		t.Errorf("buildAPIRequest() OutputCompression should be nil for dall-e-3, got %d", *apiReq.OutputCompression)
+	}
+	if apiReq.Moderation != "" {
+		t.Errorf("buildAPIRequest() Moderation should be empty for dall-e-3, got %v", apiReq.Moderation)
+	}
+}
+
+func TestProvider_Edit_WithCompressionAndModeration(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseMultipartForm(10 << 20); err != nil {
+			t.Fatalf("ParseMultipartForm() error = %v", err)
+		}
+
+		compression := r.FormValue("output_compression")
+		if compression != "75" {
+			t.Errorf("output_compression = %v, want 75", compression)
+		}
+
+		moderation := r.FormValue("moderation")
+		if moderation != "low" {
+			t.Errorf("moderation = %v, want low", moderation)
+		}
+
+		encoded := base64.StdEncoding.EncodeToString([]byte("edited"))
+		resp := fmt.Sprintf(`{"created": 123, "data": [{"b64_json": "%s"}]}`, encoded)
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(resp))
+	}))
+	defer server.Close()
+
+	cfg := &provider.Config{APIKey: "test-key", BaseURL: server.URL}
+	p, _ := New(cfg, models.DefaultRegistry())
+
+	compression := 75
+	req := &models.EditRequest{
+		Model:             "gpt-image-1-mini",
+		Prompt:            "edit this",
+		Image:             []byte("fake image data"),
+		OutputCompression: &compression,
+		Moderation:        "low",
+	}
+
+	resp, err := p.Edit(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Edit() error = %v", err)
+	}
+	if len(resp.Images) != 1 {
+		t.Errorf("Edit() returned %d images, want 1", len(resp.Images))
+	}
+}
+
+func TestProvider_Edit_GPTImageMini(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := apiResponse{
+			Data: []imageData{
+				{B64JSON: base64.StdEncoding.EncodeToString([]byte("edited"))},
+			},
+		}
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	cfg := &provider.Config{APIKey: "test-key", BaseURL: server.URL}
+	p, _ := New(cfg, models.DefaultRegistry())
+
+	req := &models.EditRequest{
+		Model:  "gpt-image-1-mini",
+		Prompt: "edit",
+		Image:  []byte("image"),
+		Size:   "1024x1024",
+	}
+
+	resp, err := p.Edit(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Edit() error = %v", err)
+	}
+
+	if len(resp.Images) != 1 {
+		t.Errorf("Edit() returned %d images, want 1", len(resp.Images))
+	}
+	if resp.Cost == nil {
+		t.Fatal("Edit() should return cost information")
+	}
+	// Edit uses auto quality for GPT image models, 1024x1024 = $0.011
+	expectedCost := 0.011
+	if !floatEquals(resp.Cost.PerImage, expectedCost) {
+		t.Errorf("Edit() cost.PerImage = %f, want %f", resp.Cost.PerImage, expectedCost)
+	}
+}
+
+func TestProvider_GenerateWithResponses_WithNewParams(t *testing.T) {
+	var receivedReq responsesAPIRequest
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&receivedReq); err != nil {
+			t.Fatalf("failed to decode request: %v", err)
+		}
+
+		b64Image := base64.StdEncoding.EncodeToString([]byte("test"))
+		resp := responsesAPIResponse{
+			ID: "resp_params123",
+			Output: []responsesOutputItem{
+				{
+					Type:   "image_generation_call",
+					Status: "completed",
+					Result: b64Image,
+				},
+			},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	p, _ := New(&provider.Config{APIKey: "test-key", BaseURL: server.URL}, models.DefaultRegistry())
+
+	compression := 60
+	req := models.NewResponsesRequest("test prompt")
+	req.Model = "gpt-image-1.5"
+	req.ImageModel = "gpt-image-1-mini"
+	req.OutputCompression = &compression
+	req.Moderation = "low"
+
+	_, err := p.GenerateWithResponses(context.Background(), req)
+	if err != nil {
+		t.Fatalf("GenerateWithResponses() error = %v", err)
+	}
+
+	if len(receivedReq.Tools) != 1 {
+		t.Fatalf("expected 1 tool, got %d", len(receivedReq.Tools))
+	}
+
+	tool := receivedReq.Tools[0]
+	if tool.Model != "gpt-image-1-mini" {
+		t.Errorf("tool.Model = %v, want gpt-image-1-mini", tool.Model)
+	}
+	if tool.OutputCompression == nil {
+		t.Fatal("tool.OutputCompression should not be nil")
+	}
+	if *tool.OutputCompression != 60 {
+		t.Errorf("tool.OutputCompression = %d, want 60", *tool.OutputCompression)
+	}
+	if tool.Moderation != "low" {
+		t.Errorf("tool.Moderation = %v, want low", tool.Moderation)
+	}
+}
+
+func TestProvider_Generate_Cost_GPTImageMini(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := apiResponse{
+			Data: []imageData{
+				{B64JSON: base64.StdEncoding.EncodeToString([]byte("img"))},
+			},
+		}
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	cfg := &provider.Config{APIKey: "test-key", BaseURL: server.URL}
+	p, _ := New(cfg, models.DefaultRegistry())
+
+	req := &models.Request{
+		Model:   "gpt-image-1-mini",
+		Prompt:  "test",
+		Count:   1,
+		Size:    "1024x1024",
+		Quality: "medium",
+	}
+
+	resp, err := p.Generate(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+
+	// gpt-image-1-mini medium quality 1024x1024 should cost $0.011
+	expectedCost := 0.011
+	if !floatEquals(resp.Cost.PerImage, expectedCost) {
+		t.Errorf("Generate() cost.PerImage = %f, want %f", resp.Cost.PerImage, expectedCost)
+	}
+}
+
+func TestIsGPTImageModel(t *testing.T) {
+	tests := []struct {
+		model string
+		want  bool
+	}{
+		{"gpt-image-1.5", true},
+		{"gpt-image-1", true},
+		{"gpt-image-1-mini", true},
+		{"dall-e-3", false},
+		{"dall-e-2", false},
+		{"unknown", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.model, func(t *testing.T) {
+			if got := isGPTImageModel(tt.model); got != tt.want {
+				t.Errorf("isGPTImageModel(%s) = %v, want %v", tt.model, got, tt.want)
+			}
+		})
+	}
+}
