@@ -52,6 +52,27 @@ var openAIPricing = map[PricingKey]float64{
 	{Model: "gpt-image-1", Size: "auto", Quality: "high"}:   0.167,
 	{Model: "gpt-image-1", Size: "auto", Quality: "auto"}:   0.042,
 
+	// gpt-image-1-mini pricing (budget model, ~50-70% cheaper than gpt-image-1)
+	{Model: "gpt-image-1-mini", Size: "1024x1024", Quality: "low"}:    0.005,
+	{Model: "gpt-image-1-mini", Size: "1024x1024", Quality: "medium"}: 0.011,
+	{Model: "gpt-image-1-mini", Size: "1024x1024", Quality: "high"}:   0.036,
+	{Model: "gpt-image-1-mini", Size: "1024x1024", Quality: "auto"}:   0.011,
+
+	{Model: "gpt-image-1-mini", Size: "1536x1024", Quality: "low"}:    0.006,
+	{Model: "gpt-image-1-mini", Size: "1536x1024", Quality: "medium"}: 0.015,
+	{Model: "gpt-image-1-mini", Size: "1536x1024", Quality: "high"}:   0.052,
+	{Model: "gpt-image-1-mini", Size: "1536x1024", Quality: "auto"}:   0.015,
+
+	{Model: "gpt-image-1-mini", Size: "1024x1536", Quality: "low"}:    0.006,
+	{Model: "gpt-image-1-mini", Size: "1024x1536", Quality: "medium"}: 0.015,
+	{Model: "gpt-image-1-mini", Size: "1024x1536", Quality: "high"}:   0.052,
+	{Model: "gpt-image-1-mini", Size: "1024x1536", Quality: "auto"}:   0.015,
+
+	{Model: "gpt-image-1-mini", Size: "auto", Quality: "low"}:    0.005,
+	{Model: "gpt-image-1-mini", Size: "auto", Quality: "medium"}: 0.011,
+	{Model: "gpt-image-1-mini", Size: "auto", Quality: "high"}:   0.036,
+	{Model: "gpt-image-1-mini", Size: "auto", Quality: "auto"}:   0.011,
+
 	// DALL-E 3 pricing
 	{Model: "dall-e-3", Size: "1024x1024", Quality: "standard"}: 0.040,
 	{Model: "dall-e-3", Size: "1024x1024", Quality: "hd"}:       0.080,

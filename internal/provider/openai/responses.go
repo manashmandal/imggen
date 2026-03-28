@@ -21,13 +21,16 @@ type responsesAPIRequest struct {
 }
 
 type responsesToolConfig struct {
-	Type          string `json:"type"`
-	Action        string `json:"action,omitempty"`
-	InputFidelity string `json:"input_fidelity,omitempty"`
-	Background    string `json:"background,omitempty"`
-	OutputFormat  string `json:"output_format,omitempty"`
-	Quality       string `json:"quality,omitempty"`
-	Size          string `json:"size,omitempty"`
+	Type              string `json:"type"`
+	Action            string `json:"action,omitempty"`
+	InputFidelity     string `json:"input_fidelity,omitempty"`
+	Background        string `json:"background,omitempty"`
+	OutputFormat      string `json:"output_format,omitempty"`
+	Quality           string `json:"quality,omitempty"`
+	Size              string `json:"size,omitempty"`
+	Model             string `json:"model,omitempty"`
+	OutputCompression *int   `json:"output_compression,omitempty"`
+	Moderation        string `json:"moderation,omitempty"`
 }
 
 type responsesInputMessage struct {
@@ -127,6 +130,15 @@ func (p *Provider) GenerateWithResponses(ctx context.Context, req *models.Respon
 	}
 	if req.Size != "" {
 		tool.Size = req.Size
+	}
+	if req.ImageModel != "" {
+		tool.Model = req.ImageModel
+	}
+	if req.OutputCompression != nil {
+		tool.OutputCompression = req.OutputCompression
+	}
+	if req.Moderation != "" {
+		tool.Moderation = req.Moderation
 	}
 
 	apiReq := &responsesAPIRequest{

@@ -23,15 +23,17 @@ const (
 )
 
 type apiRequest struct {
-	Model          string `json:"model"`
-	Prompt         string `json:"prompt"`
-	N              int    `json:"n,omitempty"`
-	Size           string `json:"size,omitempty"`
-	Quality        string `json:"quality,omitempty"`
-	Style          string `json:"style,omitempty"`
-	ResponseFormat string `json:"response_format,omitempty"`
-	OutputFormat   string `json:"output_format,omitempty"`
-	Background     string `json:"background,omitempty"`
+	Model             string `json:"model"`
+	Prompt            string `json:"prompt"`
+	N                 int    `json:"n,omitempty"`
+	Size              string `json:"size,omitempty"`
+	Quality           string `json:"quality,omitempty"`
+	Style             string `json:"style,omitempty"`
+	ResponseFormat    string `json:"response_format,omitempty"`
+	OutputFormat      string `json:"output_format,omitempty"`
+	Background        string `json:"background,omitempty"`
+	OutputCompression *int   `json:"output_compression,omitempty"`
+	Moderation        string `json:"moderation,omitempty"`
 }
 
 type apiResponse struct {
@@ -204,6 +206,14 @@ func (p *Provider) generateWithReferences(ctx context.Context, req *models.Reque
 	return p.Edit(ctx, editReq)
 }
 
+func isGPTImageModel(model string) bool {
+	switch model {
+	case "gpt-image-1.5", "gpt-image-1", "gpt-image-1-mini":
+		return true
+	}
+	return false
+}
+
 func (p *Provider) buildAPIRequest(req *models.Request) *apiRequest {
 	apiReq := &apiRequest{
 		Model:  req.Model,
@@ -216,21 +226,29 @@ func (p *Provider) buildAPIRequest(req *models.Request) *apiRequest {
 		apiReq.Quality = req.Quality
 	}
 
-	switch req.Model {
-	case "gpt-image-1.5", "gpt-image-1":
+	if isGPTImageModel(req.Model) {
 		if req.Format != "" {
 			apiReq.OutputFormat = req.Format.String()
 		}
 		if req.Transparent {
 			apiReq.Background = "transparent"
 		}
-	case "dall-e-3":
-		apiReq.ResponseFormat = "url"
-		if req.Style != "" {
-			apiReq.Style = req.Style
+		if req.OutputCompression != nil {
+			apiReq.OutputCompression = req.OutputCompression
 		}
-	case "dall-e-2":
-		apiReq.ResponseFormat = "url"
+		if req.Moderation != "" {
+			apiReq.Moderation = req.Moderation
+		}
+	} else {
+		switch req.Model {
+		case "dall-e-3":
+			apiReq.ResponseFormat = "url"
+			if req.Style != "" {
+				apiReq.Style = req.Style
+			}
+		case "dall-e-2":
+			apiReq.ResponseFormat = "url"
+		}
 	}
 
 	return apiReq

@@ -51,6 +51,8 @@ func (c *Calculator) calculateOpenAI(model, size, quality string) float64 {
 		return 0.034 // medium quality default
 	case "gpt-image-1":
 		return 0.042 // medium quality default
+	case "gpt-image-1-mini":
+		return 0.011 // medium quality default
 	case "dall-e-3":
 		return 0.040 // standard quality default
 	case "dall-e-2":

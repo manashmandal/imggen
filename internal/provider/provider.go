@@ -30,7 +30,8 @@ type Provider interface {
 	ListModels() []string
 }
 
-// VideoProvider interface for video generation capabilities
+// VideoProvider interface for video generation capabilities.
+// Deprecated: Sora API shuts down Sep 24, 2026. See https://help.openai.com/en/articles/20001152-what-to-know-about-the-sora-discontinuation
 type VideoProvider interface {
 	GenerateVideo(ctx context.Context, req *models.VideoRequest) (*models.VideoResponse, error)
 	SupportsVideoModel(model string) bool

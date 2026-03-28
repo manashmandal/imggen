@@ -105,10 +105,11 @@ func TestProvider_ListModels(t *testing.T) {
 	modelsList := p.ListModels()
 
 	expected := map[string]bool{
-		"gpt-image-1.5": true,
-		"gpt-image-1":   true,
-		"dall-e-3":      true,
-		"dall-e-2":      true,
+		"gpt-image-1.5":   true,
+		"gpt-image-1":     true,
+		"gpt-image-1-mini": true,
+		"dall-e-3":        true,
+		"dall-e-2":        true,
 	}
 
 	if len(modelsList) != len(expected) {

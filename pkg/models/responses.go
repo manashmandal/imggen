@@ -13,6 +13,9 @@ type ResponsesRequest struct {
 	Background         string
 	OutputFormat       OutputFormat
 	InputFidelity      string
+	OutputCompression  *int   // 0-100, nil means not set (server default)
+	Moderation         string // "low" or "auto"
+	ImageModel         string // tool-level model override (gpt-image-1, gpt-image-1-mini, gpt-image-1.5)
 }
 
 func NewResponsesRequest(prompt string) *ResponsesRequest {
