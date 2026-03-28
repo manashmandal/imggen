@@ -2,6 +2,7 @@ package models
 
 import (
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -736,5 +737,101 @@ func TestDefaultRegistry_VideoModels(t *testing.T) {
 	models := r.ListVideoModels()
 	if len(models) != 2 {
 		t.Errorf("ListVideoModels() returned %d models, want 2", len(models))
+	}
+}
+
+func TestNewEditRequest(t *testing.T) {
+	image := []byte("fake-image-data")
+	prompt := "remove the background"
+	req := NewEditRequest(image, prompt)
+
+	if string(req.Image) != string(image) {
+		t.Errorf("NewEditRequest().Image = %v, want %v", req.Image, image)
+	}
+	if req.Prompt != prompt {
+		t.Errorf("NewEditRequest().Prompt = %v, want %v", req.Prompt, prompt)
+	}
+	if req.Count != 1 {
+		t.Errorf("NewEditRequest().Count = %v, want 1", req.Count)
+	}
+	if req.Format != FormatPNG {
+		t.Errorf("NewEditRequest().Format = %v, want %v", req.Format, FormatPNG)
+	}
+}
+
+func TestEditRequest_Validate_EmptyImage(t *testing.T) {
+	req := &EditRequest{
+		Image:  nil,
+		Images: nil,
+		Prompt: "edit this",
+	}
+	err := req.Validate()
+	if !errors.Is(err, ErrNoImageData) {
+		t.Errorf("Validate() error = %v, want %v", err, ErrNoImageData)
+	}
+}
+
+func TestEditRequest_Validate_EmptyPrompt(t *testing.T) {
+	req := &EditRequest{
+		Image:  []byte("fake-image-data"),
+		Prompt: "",
+	}
+	err := req.Validate()
+	if !errors.Is(err, ErrEmptyPrompt) {
+		t.Errorf("Validate() error = %v, want %v", err, ErrEmptyPrompt)
+	}
+}
+
+func TestEditRequest_Validate_EmptyReferenceImage(t *testing.T) {
+	req := &EditRequest{
+		Images: [][]byte{{}},
+		Prompt: "edit this",
+	}
+	err := req.Validate()
+	if !errors.Is(err, ErrInvalidReference) {
+		t.Errorf("Validate() error = %v, want %v", err, ErrInvalidReference)
+	}
+}
+
+func TestEditRequest_Validate_Success(t *testing.T) {
+	req := &EditRequest{
+		Image:  []byte("fake-image-data"),
+		Prompt: "remove the background",
+	}
+	err := req.Validate()
+	if err != nil {
+		t.Errorf("Validate() error = %v, want nil", err)
+	}
+}
+
+func TestDefaultRegistry_GPTImage1Mini(t *testing.T) {
+	r := DefaultRegistry()
+	cap, ok := r.Get("gpt-image-1-mini")
+	if !ok {
+		t.Fatal("gpt-image-1-mini not found in registry")
+	}
+
+	if !cap.SupportsTransparency {
+		t.Error("gpt-image-1-mini should support transparency")
+	}
+	if !cap.SupportsEdit {
+		t.Error("gpt-image-1-mini should support edit")
+	}
+	if cap.MaxImages != 10 {
+		t.Errorf("gpt-image-1-mini MaxImages = %d, want 10", cap.MaxImages)
+	}
+
+	expectedSizes := []string{"1024x1024", "1536x1024", "1024x1536", "auto"}
+	for _, s := range expectedSizes {
+		if !slices.Contains(cap.SupportedSizes, s) {
+			t.Errorf("gpt-image-1-mini missing size %s", s)
+		}
+	}
+
+	expectedQualities := []string{"auto", "low", "medium", "high"}
+	for _, q := range expectedQualities {
+		if !slices.Contains(cap.SupportedQualities, q) {
+			t.Errorf("gpt-image-1-mini missing quality %s", q)
+		}
 	}
 }

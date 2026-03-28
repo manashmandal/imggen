@@ -41,7 +41,7 @@ imggen -P "pose one" -P "pose two" \
 
 ## Notes
 
-- Reference images require a model that supports edits (gpt-image-1, dall-e-2).
+- Reference images require a model that supports edits (gpt-image-1, gpt-image-1-mini, dall-e-2).
 - If a model does not support references, the request fails with a clear error.
 - Weights default to 1.0 when omitted.
 - Consistency settings are validated: mode must be `identity`, `style`, or `hybrid`, and strength must be 0–1.

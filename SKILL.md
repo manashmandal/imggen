@@ -12,7 +12,7 @@ Generate images from text prompts and extract text from images using OpenAI's AP
 
 ## Overview
 
-`imggen` is a command-line tool that interfaces with OpenAI's image generation API. It supports multiple models (gpt-image-1.5, gpt-image-1, dall-e-3, dall-e-2) and provides options for image size, quality, format, and style. It also supports image editing, vision-based image analysis, video generation, and OCR.
+`imggen` is a command-line tool that interfaces with OpenAI's image generation API. It supports multiple models (gpt-image-1.5, gpt-image-1, gpt-image-1-mini, dall-e-3, dall-e-2) and provides options for image size, quality, format, and style. It also supports image editing, vision-based image analysis, video generation, and OCR.
 
 ## Prerequisites
 
@@ -30,7 +30,7 @@ imggen [flags] "prompt"
 
 | Flag | Short | Default | Description |
 |------|-------|---------|-------------|
-| `--model` | `-m` | `gpt-image-1.5` | Model: gpt-image-1.5, gpt-image-1, dall-e-3, dall-e-2 |
+| `--model` | `-m` | `gpt-image-1.5` | Model: gpt-image-1.5, gpt-image-1, gpt-image-1-mini, dall-e-3, dall-e-2 |
 | `--size` | `-s` | `1024x1024` | Image dimensions |
 | `--quality` | `-q` | `auto` | Quality level |
 | `--count` | `-n` | `1` | Number of images (1-10 for gpt-image-1, 1 for dall-e-3) |
@@ -38,6 +38,8 @@ imggen [flags] "prompt"
 | `--format` | `-f` | `png` | Output format: png, jpeg, webp |
 | `--style` | | `vivid` | Style for dall-e-3: vivid, natural |
 | `--transparent` | `-t` | `false` | Transparent background (gpt-image-1 + png/webp only) |
+| `--compression` | | | Compression level 0-100 (GPT image models, jpeg/webp only) |
+| `--moderation` | | `auto` | Moderation level: auto, low (GPT image models only) |
 | `--prompt` | `-P` | | Prompt (can be specified multiple times) |
 | `--parallel` | `-p` | `1` | Number of parallel workers for multiple prompts |
 | `--api-key` | | `$OPENAI_API_KEY` | Override API key |
@@ -51,6 +53,12 @@ imggen [flags] "prompt"
 - **Supports**: Transparent backgrounds, multiple output formats, editing
 
 ### gpt-image-1
+- **Sizes**: 1024x1024, 1536x1024 (landscape), 1024x1536 (portrait), auto
+- **Quality**: auto, low, medium, high
+- **Max images**: 10 per request
+- **Supports**: Transparent backgrounds, multiple output formats
+
+### gpt-image-1-mini
 - **Sizes**: 1024x1024, 1536x1024 (landscape), 1024x1536 (portrait), auto
 - **Quality**: auto, low, medium, high
 - **Max images**: 10 per request
@@ -251,12 +259,12 @@ Generate videos using OpenAI's Sora API:
 imggen video <prompt> [flags]
 ```
 
-### Video Models
+### Video Models (Deprecated -- shuts down Sep 24, 2026)
 
 | Model | Duration | Sizes | Cost |
 |-------|----------|-------|------|
-| sora-2 (default) | 4, 8, 12 sec | 720x1280, 1280x720, 1024x1792, 1792x1024 | $0.10/sec |
-| sora-2-pro | 4, 8, 12, 16, 20 sec | Above + 1080x1920, 1920x1080 | $0.30/sec |
+| sora-2 (default, deprecated) | 4, 8, 12 sec | 720x1280, 1280x720, 1024x1792, 1792x1024 | $0.10/sec |
+| sora-2-pro (deprecated) | 4, 8, 12, 16, 20 sec | Above + 1080x1920, 1920x1080 | $0.30/sec |
 
 ### Video Flags
 
@@ -294,7 +302,7 @@ imggen edit <image> [prompt] [flags]
 
 | Flag | Short | Default | Description |
 |------|-------|---------|-------------|
-| `--model` | `-m` | `gpt-image-1.5` | Model (gpt-image-1.5, gpt-image-1, dall-e-2) |
+| `--model` | `-m` | `gpt-image-1.5` | Model (gpt-image-1.5, gpt-image-1, gpt-image-1-mini, dall-e-2) |
 | `--size` | `-s` | model default | Output size (e.g., 1024x1024) |
 | `--quality` | `-q` | | Quality level (auto, low, medium, high) |
 | `--count` | `-n` | `1` | Number of edit variations |
@@ -302,6 +310,8 @@ imggen edit <image> [prompt] [flags]
 | `--format` | `-f` | `png` | Output format (png, jpeg, webp) |
 | `--mask` | | | Mask image for inpainting (PNG with alpha channel) |
 | `--bg-remove` | | `false` | Remove background (no prompt needed) |
+| `--compression` | | | Compression level 0-100 (GPT image models, jpeg/webp only) |
+| `--moderation` | | `auto` | Moderation level: auto, low (GPT image models only) |
 | `--show` | `-S` | `false` | Display result in terminal |
 
 ### Edit Examples
@@ -368,7 +378,7 @@ Common errors and solutions:
 - **"supports maximum N images"**: Reduce `--count` value
 - **"does not support --style"**: Only dall-e-3 supports style flag
 - **"does not support --transparent"**: Only gpt-image-1 supports transparency
-- **"does not support editing"**: Use a model that supports editing (gpt-image-1.5, gpt-image-1, dall-e-2)
+- **"does not support editing"**: Use a model that supports editing (gpt-image-1.5, gpt-image-1, gpt-image-1-mini, dall-e-2)
 - **"provider does not support vision analysis"**: Ensure using OpenAI provider for describe command
 
 ## Pricing Reference
@@ -388,6 +398,13 @@ Costs per image (USD):
 | 1024x1024 | $0.011 | $0.042 | $0.167 |
 | 1536x1024 | $0.016 | $0.063 | $0.250 |
 | 1024x1536 | $0.016 | $0.063 | $0.250 |
+
+### gpt-image-1-mini
+| Size | Low | Medium | High |
+|------|-----|--------|------|
+| 1024x1024 | $0.005 | $0.011 | $0.036 |
+| 1536x1024 | $0.006 | $0.015 | $0.052 |
+| 1024x1536 | $0.006 | $0.015 | $0.052 |
 
 ### dall-e-3
 | Size | Standard | HD |

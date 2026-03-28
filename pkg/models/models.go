@@ -150,16 +150,18 @@ const (
 )
 
 type Request struct {
-	Prompt      string
-	Model       string
-	Size        string
-	Quality     string
-	Count       int
-	Style       string
-	Format      OutputFormat
-	Transparent bool
-	References  []ReferenceImage
-	Consistency *Consistency
+	Prompt            string
+	Model             string
+	Size              string
+	Quality           string
+	Count             int
+	Style             string
+	Format            OutputFormat
+	Transparent       bool
+	References        []ReferenceImage
+	Consistency       *Consistency
+	OutputCompression *int   // 0-100, nil means not set (server default)
+	Moderation        string // "low" or "auto" (GPT models only)
 }
 
 func NewRequest(prompt string) *Request {
@@ -171,18 +173,20 @@ func NewRequest(prompt string) *Request {
 }
 
 type EditRequest struct {
-	Image          []byte
-	Mask           []byte
-	Prompt         string
-	Model          string
-	Size           string
-	Count          int
-	Format         OutputFormat
-	Quality        string
-	Background     string
-	InputFidelity  string
-	Images         [][]byte
-	ImageMimeTypes []string
+	Image             []byte
+	Mask              []byte
+	Prompt            string
+	Model             string
+	Size              string
+	Count             int
+	Format            OutputFormat
+	Quality           string
+	Background        string
+	InputFidelity     string
+	Images            [][]byte
+	ImageMimeTypes    []string
+	OutputCompression *int   // 0-100, nil means not set (server default)
+	Moderation        string // "low" or "auto" (GPT models only)
 }
 
 func NewEditRequest(image []byte, prompt string) *EditRequest {
@@ -471,6 +475,19 @@ func DefaultRegistry() *ModelRegistry {
 	})
 
 	r.Register(&ModelCapabilities{
+		Name:                 "gpt-image-1-mini",
+		Provider:             ProviderOpenAI,
+		SupportedSizes:       []string{"1024x1024", "1536x1024", "1024x1536", "auto"},
+		SupportedQualities:   []string{"auto", "low", "medium", "high"},
+		MaxImages:            10,
+		DefaultSize:          "1024x1024",
+		DefaultQuality:       "auto",
+		SupportsStyle:        false,
+		SupportsTransparency: true,
+		SupportsEdit:         true,
+	})
+
+	r.Register(&ModelCapabilities{
 		Name:                 "dall-e-3",
 		Provider:             ProviderOpenAI,
 		SupportedSizes:       []string{"1024x1024", "1024x1792", "1792x1024"},
@@ -546,7 +563,8 @@ func DefaultRegistry() *ModelRegistry {
 		DefaultMaxTokens: 16384,
 	})
 
-	// Video models (OpenAI Sora)
+	// Video models (OpenAI Sora) — DEPRECATED: shuts down Sep 24, 2026
+	// See: https://help.openai.com/en/articles/20001152-what-to-know-about-the-sora-discontinuation
 	r.RegisterVideo(&VideoModelCapabilities{
 		Name:               "sora-2",
 		Provider:           ProviderOpenAI,

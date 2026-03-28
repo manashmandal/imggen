@@ -546,3 +546,63 @@ func TestGetVideoPricePerSecond_NotFound(t *testing.T) {
 		t.Errorf("GetVideoPricePerSecond() = %v, want 0", price)
 	}
 }
+
+func TestCalculator_Calculate_OpenAI_GPTImageMini(t *testing.T) {
+	calc := NewCalculator()
+
+	tests := []struct {
+		name     string
+		size     string
+		quality  string
+		count    int
+		expected float64
+	}{
+		{"1024x1024 low", "1024x1024", "low", 1, 0.005},
+		{"1024x1024 medium", "1024x1024", "medium", 1, 0.011},
+		{"1024x1024 high", "1024x1024", "high", 1, 0.036},
+		{"1024x1024 auto", "1024x1024", "auto", 1, 0.011},
+		{"1536x1024 low", "1536x1024", "low", 1, 0.006},
+		{"1536x1024 medium", "1536x1024", "medium", 1, 0.015},
+		{"1536x1024 high", "1536x1024", "high", 1, 0.052},
+		{"auto medium", "auto", "medium", 1, 0.011},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := calc.Calculate(models.ProviderOpenAI, "gpt-image-1-mini", tt.size, tt.quality, tt.count)
+			if !floatEquals(result.Total, tt.expected) {
+				t.Errorf("expected total %.4f, got %.4f", tt.expected, result.Total)
+			}
+			if result.Currency != CurrencyUSD {
+				t.Errorf("expected currency %s, got %s", CurrencyUSD, result.Currency)
+			}
+		})
+	}
+}
+
+func TestCalculator_Calculate_Fallback_GPTImageMini(t *testing.T) {
+	calc := NewCalculator()
+
+	// Unknown combination should use fallback
+	result := calc.Calculate(models.ProviderOpenAI, "gpt-image-1-mini", "unknown-size", "unknown-quality", 1)
+	if !floatEquals(result.Total, 0.011) { // default fallback for gpt-image-1-mini
+		t.Errorf("expected fallback total 0.011, got %.4f", result.Total)
+	}
+}
+
+func TestAllGPTImageMiniCombinationsHavePricing(t *testing.T) {
+	sizes := []string{"1024x1024", "1536x1024", "1024x1536", "auto"}
+	qualities := []string{"low", "medium", "high", "auto"}
+
+	for _, size := range sizes {
+		for _, quality := range qualities {
+			price, ok := GetOpenAIPrice("gpt-image-1-mini", size, quality)
+			if !ok {
+				t.Errorf("gpt-image-1-mini %s/%s should have pricing", size, quality)
+			}
+			if price <= 0 {
+				t.Errorf("gpt-image-1-mini %s/%s has invalid price: %.4f", size, quality, price)
+			}
+		}
+	}
+}

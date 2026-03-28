@@ -109,9 +109,21 @@ func (p *Provider) Edit(ctx context.Context, req *models.EditRequest) (*models.R
 		}
 	}
 
-	if (req.Model == "gpt-image-1.5" || req.Model == "gpt-image-1") && req.Format != "" {
-		if err := writer.WriteField("output_format", req.Format.String()); err != nil {
-			return nil, fmt.Errorf("failed to write output_format: %w", err)
+	if isGPTImageModel(req.Model) {
+		if req.Format != "" {
+			if err := writer.WriteField("output_format", req.Format.String()); err != nil {
+				return nil, fmt.Errorf("failed to write output_format: %w", err)
+			}
+		}
+		if req.OutputCompression != nil {
+			if err := writer.WriteField("output_compression", fmt.Sprintf("%d", *req.OutputCompression)); err != nil {
+				return nil, fmt.Errorf("failed to write output_compression: %w", err)
+			}
+		}
+		if req.Moderation != "" {
+			if err := writer.WriteField("moderation", req.Moderation); err != nil {
+				return nil, fmt.Errorf("failed to write moderation: %w", err)
+			}
 		}
 	} else if req.Model == "dall-e-2" {
 		if err := writer.WriteField("response_format", "url"); err != nil {
@@ -165,9 +177,9 @@ func (p *Provider) Edit(ctx context.Context, req *models.EditRequest) (*models.R
 		return nil, err
 	}
 
-	// Edit operations use medium quality for gpt-image-1, no quality for dall-e-2
+	// Edit operations use medium quality for GPT image models, no quality for dall-e-2
 	quality := req.Quality
-	if (req.Model == "gpt-image-1.5" || req.Model == "gpt-image-1") && quality == "" {
+	if isGPTImageModel(req.Model) && quality == "" {
 		quality = "auto"
 	}
 	response.Cost = p.costCalc.Calculate(models.ProviderOpenAI, req.Model, req.Size, quality, len(response.Images))

@@ -55,6 +55,8 @@ var (
 	flagRefWeights   []float64
 	flagConsMode     string
 	flagConsStrength float64
+	flagCompression  int
+	flagModeration   string
 )
 
 var (
@@ -95,15 +97,17 @@ var (
 )
 
 var (
-	flagEditModel    string
-	flagEditSize     string
-	flagEditQuality  string
-	flagEditCount    int
-	flagEditOutput   string
-	flagEditFormat   string
-	flagEditMask     string
-	flagEditBgRemove bool
-	flagEditShow     bool
+	flagEditModel       string
+	flagEditSize        string
+	flagEditQuality     string
+	flagEditCount       int
+	flagEditOutput      string
+	flagEditFormat      string
+	flagEditMask        string
+	flagEditBgRemove    bool
+	flagEditShow        bool
+	flagEditCompression int
+	flagEditModeration  string
 )
 
 var (
@@ -163,7 +167,7 @@ func (app *App) logCost(ctx context.Context, providerName, model string, cost fl
 
 var premiumModels = map[string]string{
 	"gpt-5.2":    "gpt-5.2 ($1.75/1M input tokens). Use -m gpt-5-mini for 7x cheaper, or -m gpt-5-nano for 35x cheaper.",
-	"sora-2-pro": "sora-2-pro ($0.30/sec). Use -m sora-2 for 3x cheaper ($0.10/sec).",
+	"sora-2-pro": "sora-2-pro ($0.30/sec) [DEPRECATED]. Use -m sora-2 for 3x cheaper ($0.10/sec).",
 }
 
 func (app *App) warnPremiumModel(model string) {
@@ -192,11 +196,12 @@ func newRootCmd(app *App) *cobra.Command {
 		Long: `imggen is a CLI tool for generating, editing, and analyzing images using AI APIs.
 
 Supported providers:
-  - OpenAI (gpt-image-1.5, gpt-image-1, dall-e-3, dall-e-2)
-  - OpenAI Video (sora-2, sora-2-pro)
+  - OpenAI (gpt-image-1.5, gpt-image-1, gpt-image-1-mini, dall-e-3, dall-e-2)
+  - OpenAI Video (sora-2, sora-2-pro) [DEPRECATED — shuts down Sep 24, 2026]
 
 Image Generation:
   imggen "a sunset over mountains"
+  imggen -m gpt-image-1-mini -n 3 "quick concept art"
   imggen -m gpt-image-1 -n 3 --transparent "logo design"
 
 Image Editing:
@@ -208,7 +213,7 @@ Image Analysis:
   imggen describe photo.png
   imggen describe a.png b.png -p "compare these"
 
-Video Generation:
+Video Generation (deprecated):
   imggen video "a cat walking on a beach"
 
 OCR:
@@ -231,19 +236,21 @@ OCR:
 		},
 	}
 
-	cmd.Flags().StringVarP(&flagModel, "model", "m", "gpt-image-1.5", "model to use (gpt-image-1.5, gpt-image-1, dall-e-3, dall-e-2)")
+	cmd.Flags().StringVarP(&flagModel, "model", "m", "gpt-image-1.5", "model to use (gpt-image-1.5, gpt-image-1, gpt-image-1-mini, dall-e-3, dall-e-2)")
 	cmd.Flags().StringVarP(&flagSize, "size", "s", "", "image size (e.g., 1024x1024)")
 	cmd.Flags().StringVarP(&flagQuality, "quality", "q", "", "quality level")
 	cmd.Flags().IntVarP(&flagCount, "count", "n", 1, "number of images to generate")
 	cmd.Flags().StringVarP(&flagOutput, "output", "o", "", "output filename or directory (directory when using --prompt)")
 	cmd.Flags().StringVarP(&flagFormat, "format", "f", "png", "output format (png, jpeg, webp)")
 	cmd.Flags().StringVar(&flagStyle, "style", "", "style for dall-e-3 (vivid, natural)")
-	cmd.Flags().BoolVarP(&flagTransparent, "transparent", "t", false, "transparent background (gpt-image-1.5/gpt-image-1 only)")
+	cmd.Flags().BoolVarP(&flagTransparent, "transparent", "t", false, "transparent background (GPT image models only)")
 	cmd.Flags().StringArrayVar(&flagRefs, "ref", nil, "reference image path (repeatable)")
 	cmd.Flags().StringArrayVar(&flagRefPrompts, "ref-prompt", nil, "reference prompt aligned with --ref order")
 	cmd.Flags().Float64SliceVar(&flagRefWeights, "ref-weight", nil, "reference weight aligned with --ref order")
 	cmd.Flags().StringVar(&flagConsMode, "consistency-mode", "", "consistency mode (identity, style, hybrid)")
 	cmd.Flags().Float64Var(&flagConsStrength, "consistency-strength", 0, "consistency strength (0-1)")
+	cmd.Flags().IntVar(&flagCompression, "compression", -1, "output compression 0-100 (GPT image models, jpeg/webp only)")
+	cmd.Flags().StringVar(&flagModeration, "moderation", "", "moderation level: auto or low (GPT image models only)")
 	cmd.Flags().StringVar(&flagAPIKey, "api-key", "", "API key (defaults to OPENAI_API_KEY)")
 	cmd.Flags().BoolVarP(&flagShow, "show", "S", false, "display image in terminal (Kitty graphics protocol)")
 	cmd.Flags().BoolVarP(&flagInteractive, "interactive", "i", false, "start interactive editing mode")
@@ -402,6 +409,12 @@ func runGenerate(_ *cobra.Command, args []string, app *App) error {
 	req.Style = flagStyle
 	req.Format = format
 	req.Transparent = flagTransparent
+	if flagCompression >= 0 {
+		req.OutputCompression = &flagCompression
+	}
+	if flagModeration != "" {
+		req.Moderation = flagModeration
+	}
 	refs, err := buildReferences(flagRefs, flagRefPrompts, flagRefWeights)
 	if err != nil {
 		return err
@@ -1494,8 +1507,12 @@ func runOCR(_ *cobra.Command, args []string, app *App) error {
 func newVideoCmd(app *App) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "video <prompt>",
-		Short: "Generate videos using AI video generation APIs",
-		Long: `Generate videos using OpenAI's Sora video generation API.
+		Short: "[DEPRECATED] Generate videos using AI video generation APIs",
+		Long: `[DEPRECATED] Generate videos using OpenAI's Sora video generation API.
+
+⚠ DEPRECATION NOTICE: OpenAI has announced the discontinuation of Sora.
+  The Sora API will shut down on September 24, 2026.
+  See: https://help.openai.com/en/articles/20001152-what-to-know-about-the-sora-discontinuation
 
 Supported models:
   - sora-2 (default): Standard quality, up to 12 seconds
@@ -1522,6 +1539,9 @@ Examples:
 }
 
 func runVideo(_ *cobra.Command, args []string, app *App) error {
+	fmt.Fprintln(app.Err, "\033[33m⚠ DEPRECATED: Sora video generation is discontinued by OpenAI and will shut down on September 24, 2026.\033[0m")
+	fmt.Fprintln(app.Err, "\033[33m  See: https://help.openai.com/en/articles/20001152-what-to-know-about-the-sora-discontinuation\033[0m")
+
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
@@ -1620,7 +1640,7 @@ Examples:
 		},
 	}
 
-	cmd.Flags().StringVarP(&flagEditModel, "model", "m", "gpt-image-1.5", "model to use (gpt-image-1.5, gpt-image-1, dall-e-2)")
+	cmd.Flags().StringVarP(&flagEditModel, "model", "m", "gpt-image-1.5", "model to use (gpt-image-1.5, gpt-image-1, gpt-image-1-mini, dall-e-2)")
 	cmd.Flags().StringVarP(&flagEditSize, "size", "s", "", "output size (e.g., 1024x1024)")
 	cmd.Flags().StringVarP(&flagEditQuality, "quality", "q", "", "quality level (auto, low, medium, high)")
 	cmd.Flags().IntVarP(&flagEditCount, "count", "n", 1, "number of edit variations (default 1)")
@@ -1629,6 +1649,8 @@ Examples:
 	cmd.Flags().StringVar(&flagEditMask, "mask", "", "mask image for inpainting (PNG with alpha channel)")
 	cmd.Flags().BoolVar(&flagEditBgRemove, "bg-remove", false, "remove background (no prompt needed)")
 	cmd.Flags().BoolVarP(&flagEditShow, "show", "S", false, "display result in terminal")
+	cmd.Flags().IntVar(&flagEditCompression, "compression", -1, "output compression 0-100 (GPT image models, jpeg/webp only)")
+	cmd.Flags().StringVar(&flagEditModeration, "moderation", "", "moderation level: auto or low (GPT image models only)")
 	cmd.Flags().StringVar(&flagAPIKey, "api-key", "", "API key (defaults to OPENAI_API_KEY)")
 	cmd.Flags().BoolVarP(&flagVerbose, "verbose", "v", false, "log HTTP requests and responses")
 
@@ -1672,6 +1694,12 @@ func runEdit(_ *cobra.Command, args []string, app *App) error {
 	req.Quality = flagEditQuality
 	req.Count = flagEditCount
 	req.Format = format
+	if flagEditCompression >= 0 {
+		req.OutputCompression = &flagEditCompression
+	}
+	if flagEditModeration != "" {
+		req.Moderation = flagEditModeration
+	}
 
 	if flagEditBgRemove {
 		req.Background = "transparent"
