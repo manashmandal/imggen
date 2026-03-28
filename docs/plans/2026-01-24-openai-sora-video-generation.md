@@ -1,3 +1,5 @@
+> **STATUS: DEPRECATED** — Sora video generation is shutting down September 24, 2026. See: https://help.openai.com/en/articles/20001152-what-to-know-about-the-sora-discontinuation
+
 # OpenAI Sora Video Generation Implementation Plan
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.

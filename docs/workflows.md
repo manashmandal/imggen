@@ -46,8 +46,10 @@ Provide values via `workflow.params` and override them with `--param key=value`.
 
 When a step omits fields, defaults are taken from CLI flags:
 - `--model`, `--size`, `--quality`, `--format`
+- `--output-compression` (0-100, GPT image models only)
+- `--moderation` ("auto" or "low", GPT image models only)
 
 ## Limitations
 
 - Steps run sequentially in dependency order (no parallel execution yet).
-- Reference images require models that support edits.
+- Reference images require models that support edits (gpt-image-1, gpt-image-1-mini, dall-e-2).

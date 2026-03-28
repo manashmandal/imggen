@@ -9,10 +9,10 @@
 > **Note:** Currently only OpenAI is supported. Other providers (Stability AI, etc.) are work in progress.
 
 **Features:**
-- Image generation (DALL-E 2, DALL-E 3, GPT-Image-1, GPT-Image-1.5)
+- Image generation (DALL-E 2, DALL-E 3, GPT-Image-1, GPT-Image-1-Mini, GPT-Image-1.5)
 - Image editing (inpainting, background removal)
 - Image analysis/description (vision AI)
-- Video generation (Sora)
+- Video generation (Sora) -- **DEPRECATED**, shuts down Sep 24, 2026 ([details](https://help.openai.com/en/articles/20001152-what-to-know-about-the-sora-discontinuation))
 - OCR with structured output
 - Batch processing
 - Cost tracking
@@ -55,6 +55,7 @@ imggen "a sunset over mountains"
 # With options
 imggen -m dall-e-3 -s 1792x1024 -q hd "panoramic cityscape"
 imggen -m gpt-image-1 -n 3 --transparent "logo design"
+imggen -m gpt-image-1-mini "quick sketch of a bicycle"
 
 # With reference images (identity consistency)
 imggen --ref ./refs/character.png --ref-prompt "keep the same character identity" "new pose running"
@@ -79,7 +80,9 @@ imggen describe photo.png
 imggen describe a.png b.png -p "compare these designs"
 ```
 
-## Video Generation
+## Video Generation (DEPRECATED)
+
+> **Deprecated:** Sora video generation shuts down Sep 24, 2026. See [What to know about the Sora discontinuation](https://help.openai.com/en/articles/20001152-what-to-know-about-the-sora-discontinuation).
 
 Generate videos using OpenAI's Sora API:
 
@@ -133,7 +136,7 @@ imggen edit photo.png -n 3 "make it look like a watercolor painting"
 
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
-| `--model` | `-m` | Model (gpt-image-1.5, gpt-image-1, dall-e-2) | gpt-image-1.5 |
+| `--model` | `-m` | Model (gpt-image-1.5, gpt-image-1, gpt-image-1-mini, dall-e-2) | gpt-image-1.5 |
 | `--mask` | | Mask image for inpainting (PNG with alpha) | |
 | `--bg-remove` | | Remove background (no prompt needed) | false |
 | `--size` | `-s` | Output size | model default |
@@ -141,6 +144,8 @@ imggen edit photo.png -n 3 "make it look like a watercolor painting"
 | `--count` | `-n` | Number of variations | 1 |
 | `--output` | `-o` | Output filename or directory | auto-generated |
 | `--format` | `-f` | Output format (png, jpeg, webp) | png |
+| `--compression` | | Compression level 0-100 (GPT image models, jpeg/webp only) | |
+| `--moderation` | | Moderation level: auto, low (GPT image models only) | |
 | `--show` | `-S` | Display result in terminal | false |
 
 ## Image Analysis (Describe)
@@ -377,7 +382,7 @@ imggen ocr document.png --suggest-schema -o suggested_schema.json
 
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
-| `--model` | `-m` | Model to use (gpt-image-1.5, gpt-image-1, dall-e-3, dall-e-2) | gpt-image-1.5 |
+| `--model` | `-m` | Model to use (gpt-image-1.5, gpt-image-1, gpt-image-1-mini, dall-e-3, dall-e-2) | gpt-image-1.5 |
 | `--size` | `-s` | Image size (e.g., 1024x1024) | model default |
 | `--quality` | `-q` | Quality level | model default |
 | `--count` | `-n` | Number of images | 1 |
@@ -385,6 +390,8 @@ imggen ocr document.png --suggest-schema -o suggested_schema.json
 | `--format` | `-f` | Output format (png, jpeg, webp) | png |
 | `--style` | | Style for dall-e-3 (vivid, natural) | |
 | `--transparent` | `-t` | Transparent background (gpt-image-1 only) | false |
+| `--compression` | | Compression level 0-100 (GPT image models, jpeg/webp only) | |
+| `--moderation` | | Moderation level: auto, low (GPT image models only) | |
 | `--prompt` | `-P` | Prompt (can be specified multiple times) | |
 | `--parallel` | `-p` | Number of parallel workers for multiple prompts | 1 |
 | `--api-key` | | API key (defaults to OPENAI_API_KEY env var) | |

@@ -50,6 +50,7 @@ This document is a concise guide for LLMs and automation agents working on imgge
 - DALL-E 3 does not support references or edits.
 - DALL-E 2 supports edits but only a single reference image.
 - Ensure request validation before calling provider.
+- Sora video generation is shutting down September 24, 2026. Do not build new features on Sora.
 
 ## New Features (v1.2.0)
 
@@ -68,3 +69,18 @@ This document is a concise guide for LLMs and automation agents working on imgge
 - Integrated into REPL: subsequent generates reference previous context
 - Falls back to Images API if Responses API fails
 - Provider: `internal/provider/openai/responses.go`
+- Supports tool-level model override: the image generation tool within a Responses API call can specify a different model than the conversation model
+
+### Models
+
+Supported image models:
+- `gpt-image-1.5` (default)
+- `gpt-image-1`
+- `gpt-image-1-mini` — same capabilities as gpt-image-1 (transparency, editing, same sizes/qualities), 50-70% cheaper
+- `dall-e-3`
+- `dall-e-2`
+
+### Additional Parameters (GPT Image Models Only)
+
+- `output_compression`: int 0-100, controls compression level for jpeg/webp output. Applies to gpt-image-1, gpt-image-1-mini, and gpt-image-1.5.
+- `moderation`: `"auto"` or `"low"`, controls content moderation strictness. Applies to gpt-image-1, gpt-image-1-mini, and gpt-image-1.5.
