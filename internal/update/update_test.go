@@ -2,6 +2,7 @@ package update
 
 import (
 	"archive/tar"
+	"archive/zip"
 	"bytes"
 	"compress/gzip"
 	"encoding/json"
@@ -330,5 +331,324 @@ func TestReplaceBinary_RenameLogic(t *testing.T) {
 	// Verify backup was cleaned up.
 	if _, err := os.Stat(backupPath); !os.IsNotExist(err) {
 		t.Error("expected backup file to be removed")
+	}
+}
+
+// --- Helper functions for building test archives ---
+
+func buildTestTarGz(t *testing.T, binaryName string, content []byte) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	gw := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gw)
+	if err := tw.WriteHeader(&tar.Header{
+		Name: binaryName,
+		Mode: 0755,
+		Size: int64(len(content)),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tw.Write(content); err != nil {
+		t.Fatal(err)
+	}
+	tw.Close()
+	gw.Close()
+	return buf.Bytes()
+}
+
+func buildTestZip(t *testing.T, fileName string, content []byte) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	fw, err := zw.Create(fileName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fw.Write(content); err != nil {
+		t.Fatal(err)
+	}
+	zw.Close()
+	return buf.Bytes()
+}
+
+// --- downloadAsset tests ---
+
+func TestDownloadAsset_Success(t *testing.T) {
+	expected := []byte("fake-binary-content-12345")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write(expected)
+	}))
+	defer server.Close()
+
+	tmpPath, err := downloadAsset(server.URL)
+	if err != nil {
+		t.Fatalf("downloadAsset failed: %v", err)
+	}
+	defer os.Remove(tmpPath)
+
+	// Verify the temp file exists.
+	info, err := os.Stat(tmpPath)
+	if err != nil {
+		t.Fatalf("temp file does not exist: %v", err)
+	}
+	if info.Size() != int64(len(expected)) {
+		t.Errorf("expected file size %d, got %d", len(expected), info.Size())
+	}
+
+	// Verify content matches.
+	got, err := os.ReadFile(tmpPath)
+	if err != nil {
+		t.Fatalf("failed to read temp file: %v", err)
+	}
+	if !bytes.Equal(got, expected) {
+		t.Errorf("content mismatch: got %q, want %q", got, expected)
+	}
+}
+
+func TestDownloadAsset_ServerError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	_, err := downloadAsset(server.URL)
+	if err == nil {
+		t.Fatal("expected error for 500 response, got nil")
+	}
+	if !strings.Contains(err.Error(), "500") {
+		t.Errorf("expected status 500 in error, got: %s", err.Error())
+	}
+}
+
+// --- extractBinary dispatch tests ---
+
+func TestExtractBinary_DispatchesTarGz(t *testing.T) {
+	binaryName := "imggen"
+	if runtime.GOOS == "windows" {
+		binaryName = "imggen.exe"
+	}
+	content := []byte("dispatched-tar-gz-binary")
+
+	archiveData := buildTestTarGz(t, binaryName, content)
+
+	tmpDir := t.TempDir()
+	archivePath := filepath.Join(tmpDir, "test-archive.tar.gz")
+	if err := os.WriteFile(archivePath, archiveData, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	extractedPath, err := extractBinary(archivePath)
+	if err != nil {
+		t.Fatalf("extractBinary failed for .tar.gz: %v", err)
+	}
+	defer os.RemoveAll(filepath.Dir(extractedPath))
+
+	got, err := os.ReadFile(extractedPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, content) {
+		t.Errorf("content mismatch: got %q, want %q", got, content)
+	}
+}
+
+func TestExtractBinary_DispatchesZip(t *testing.T) {
+	binaryName := "imggen"
+	if runtime.GOOS == "windows" {
+		binaryName = "imggen.exe"
+	}
+	content := []byte("dispatched-zip-binary")
+
+	archiveData := buildTestZip(t, binaryName, content)
+
+	tmpDir := t.TempDir()
+	archivePath := filepath.Join(tmpDir, "test-archive.zip")
+	if err := os.WriteFile(archivePath, archiveData, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	extractedPath, err := extractBinary(archivePath)
+	if err != nil {
+		t.Fatalf("extractBinary failed for .zip: %v", err)
+	}
+	defer os.RemoveAll(filepath.Dir(extractedPath))
+
+	got, err := os.ReadFile(extractedPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, content) {
+		t.Errorf("content mismatch: got %q, want %q", got, content)
+	}
+}
+
+// --- extractFromZip tests ---
+
+func TestExtractFromZip_Success(t *testing.T) {
+	binaryName := "imggen"
+	if runtime.GOOS == "windows" {
+		binaryName = "imggen.exe"
+	}
+	content := []byte("zip-extracted-binary-payload")
+
+	archiveData := buildTestZip(t, binaryName, content)
+
+	tmpDir := t.TempDir()
+	archivePath := filepath.Join(tmpDir, "test.zip")
+	if err := os.WriteFile(archivePath, archiveData, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	extractedPath, err := extractFromZip(archivePath)
+	if err != nil {
+		t.Fatalf("extractFromZip failed: %v", err)
+	}
+	defer os.RemoveAll(filepath.Dir(extractedPath))
+
+	if filepath.Base(extractedPath) != binaryName {
+		t.Errorf("expected extracted file named %s, got %s", binaryName, filepath.Base(extractedPath))
+	}
+
+	got, err := os.ReadFile(extractedPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, content) {
+		t.Errorf("content mismatch: got %q, want %q", got, content)
+	}
+}
+
+func TestExtractFromZip_NoBinary(t *testing.T) {
+	archiveData := buildTestZip(t, "README.md", []byte("just a readme"))
+
+	tmpDir := t.TempDir()
+	archivePath := filepath.Join(tmpDir, "no-binary.zip")
+	if err := os.WriteFile(archivePath, archiveData, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := extractFromZip(archivePath)
+	if err == nil {
+		t.Fatal("expected error when binary not found in zip archive")
+	}
+	if !strings.Contains(err.Error(), "not found in zip archive") {
+		t.Errorf("unexpected error: %s", err.Error())
+	}
+}
+
+// --- SelfUpdate integration tests ---
+
+func TestSelfUpdate_NoMatchingAsset(t *testing.T) {
+	// Server returns a release with assets that don't match the current platform.
+	release := releaseInfo{
+		TagName: "v2.0.0",
+		Assets: []assetInfo{
+			{Name: "imggen_2.0.0_fakeos_fakearch.tar.gz", BrowserDownloadURL: "https://example.com/fake"},
+		},
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(release)
+	}))
+	defer server.Close()
+
+	origURL := releaseURL
+	releaseURL = server.URL
+	defer func() { releaseURL = origURL }()
+
+	var buf bytes.Buffer
+	err := SelfUpdate("1.0.0", &buf)
+	if err == nil {
+		t.Fatal("expected error for missing platform asset, got nil")
+	}
+	if !strings.Contains(err.Error(), "no release asset found") {
+		t.Errorf("expected 'no release asset found' in error, got: %s", err.Error())
+	}
+}
+
+func TestSelfUpdate_FetchError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	origURL := releaseURL
+	releaseURL = server.URL
+	defer func() { releaseURL = origURL }()
+
+	var buf bytes.Buffer
+	err := SelfUpdate("1.0.0", &buf)
+	if err == nil {
+		t.Fatal("expected error for server error, got nil")
+	}
+	if !strings.Contains(err.Error(), "failed to fetch latest release") {
+		t.Errorf("expected 'failed to fetch latest release' in error, got: %s", err.Error())
+	}
+}
+
+func TestSelfUpdate_FullFlow(t *testing.T) {
+	binaryName := "imggen"
+	if runtime.GOOS == "windows" {
+		binaryName = "imggen.exe"
+	}
+	binaryContent := []byte("new-binary-v2")
+
+	// Build a real tar.gz archive for non-windows, zip for windows.
+	var archiveData []byte
+	expectedAsset := assetName("2.0.0")
+	if runtime.GOOS == "windows" {
+		archiveData = buildTestZip(t, binaryName, binaryContent)
+	} else {
+		archiveData = buildTestTarGz(t, binaryName, binaryContent)
+	}
+
+	// Server that serves the archive bytes.
+	archiveServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write(archiveData)
+	}))
+	defer archiveServer.Close()
+
+	// Server that serves the GitHub releases API response.
+	release := releaseInfo{
+		TagName: "v2.0.0",
+		Assets: []assetInfo{
+			{Name: expectedAsset, BrowserDownloadURL: archiveServer.URL},
+		},
+	}
+	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(release)
+	}))
+	defer apiServer.Close()
+
+	origURL := releaseURL
+	releaseURL = apiServer.URL
+	defer func() { releaseURL = origURL }()
+
+	var buf bytes.Buffer
+	err := SelfUpdate("1.0.0", &buf)
+
+	// The flow will succeed through download and extract, then fail at
+	// replaceBinary because os.Executable() won't point to our temp file.
+	// That's expected — we've covered downloadAsset and extractBinary paths.
+	if err == nil {
+		// If it somehow succeeded (unlikely in test), that's fine too.
+		return
+	}
+
+	output := buf.String()
+
+	// Verify we got past download and extract phases.
+	if !strings.Contains(output, "Downloading") {
+		t.Errorf("expected 'Downloading' in output, got: %s", output)
+	}
+	if !strings.Contains(output, "Extracting") {
+		t.Errorf("expected 'Extracting' in output, got: %s", output)
+	}
+	if !strings.Contains(output, "Replacing") {
+		t.Errorf("expected 'Replacing' in output, got: %s", output)
 	}
 }

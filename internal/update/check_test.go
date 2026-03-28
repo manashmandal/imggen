@@ -189,3 +189,145 @@ func TestFetchLatestVersion_Error(t *testing.T) {
 		t.Fatal("expected error for 500 response, got nil")
 	}
 }
+
+func TestCacheDir_Default(t *testing.T) {
+	origCache := cacheDirOverride
+	cacheDirOverride = ""
+	defer func() { cacheDirOverride = origCache }()
+
+	dir := cacheDir()
+	if dir == "" {
+		t.Fatal("expected non-empty cache dir")
+	}
+	if !filepath.IsAbs(dir) {
+		t.Fatalf("expected absolute path, got %s", dir)
+	}
+	if filepath.Base(dir) != ".imggen" {
+		t.Errorf("expected dir to end in .imggen, got %s", filepath.Base(dir))
+	}
+	info, err := os.Stat(dir)
+	if err != nil {
+		t.Fatalf("expected cache dir to exist: %v", err)
+	}
+	if !info.IsDir() {
+		t.Fatal("expected cache dir to be a directory")
+	}
+}
+
+func TestReadCache_NoFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	origCache := cacheDirOverride
+	cacheDirOverride = tmpDir
+	defer func() { cacheDirOverride = origCache }()
+
+	_, err := readCache()
+	if err == nil {
+		t.Fatal("expected error when cache file does not exist, got nil")
+	}
+}
+
+func TestWriteCache_Success(t *testing.T) {
+	tmpDir := t.TempDir()
+	origCache := cacheDirOverride
+	cacheDirOverride = tmpDir
+	defer func() { cacheDirOverride = origCache }()
+
+	c := &updateCache{
+		LastCheck:     time.Now().Truncate(time.Second),
+		LatestVersion: "3.2.1",
+	}
+
+	if err := writeCache(c); err != nil {
+		t.Fatalf("writeCache failed: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(tmpDir, cacheFileName))
+	if err != nil {
+		t.Fatalf("could not read written cache file: %v", err)
+	}
+
+	var got updateCache
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("could not unmarshal written cache: %v", err)
+	}
+	if got.LatestVersion != "3.2.1" {
+		t.Errorf("expected LatestVersion=3.2.1, got %s", got.LatestVersion)
+	}
+}
+
+func TestFetchLatestVersion_InvalidJSON(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{invalid`))
+	}))
+	defer ts.Close()
+
+	origURL := releaseURL
+	releaseURL = ts.URL
+	defer func() { releaseURL = origURL }()
+
+	_, err := fetchLatestVersion()
+	if err == nil {
+		t.Fatal("expected error for invalid JSON, got nil")
+	}
+}
+
+func TestCheckForUpdate_FetchError(t *testing.T) {
+	ts := newTestServer("", http.StatusInternalServerError)
+	defer ts.Close()
+	setup(t, ts.URL)
+
+	info, err := CheckForUpdate("1.0.0")
+	if err == nil {
+		t.Fatal("expected error when server returns 500, got nil")
+	}
+	if info != nil {
+		t.Fatalf("expected nil UpdateInfo on error, got %+v", info)
+	}
+}
+
+func TestNormalize(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"1.0.0", "v1.0.0"},
+		{"v1.0.0", "v1.0.0"},
+		{"2.3.4", "v2.3.4"},
+		{"v0.0.1", "v0.0.1"},
+	}
+	for _, tc := range tests {
+		got := normalize(tc.input)
+		if got != tc.want {
+			t.Errorf("normalize(%q) = %q, want %q", tc.input, got, tc.want)
+		}
+	}
+}
+
+func TestCacheRoundtrip(t *testing.T) {
+	tmpDir := t.TempDir()
+	origCache := cacheDirOverride
+	cacheDirOverride = tmpDir
+	defer func() { cacheDirOverride = origCache }()
+
+	now := time.Now().Truncate(time.Second)
+	original := &updateCache{
+		LastCheck:     now,
+		LatestVersion: "4.5.6",
+	}
+
+	if err := writeCache(original); err != nil {
+		t.Fatalf("writeCache failed: %v", err)
+	}
+
+	got, err := readCache()
+	if err != nil {
+		t.Fatalf("readCache failed: %v", err)
+	}
+	if !got.LastCheck.Equal(now) {
+		t.Errorf("LastCheck mismatch: got %v, want %v", got.LastCheck, now)
+	}
+	if got.LatestVersion != "4.5.6" {
+		t.Errorf("LatestVersion mismatch: got %s, want 4.5.6", got.LatestVersion)
+	}
+}
