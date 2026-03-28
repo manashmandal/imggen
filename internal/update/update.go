@@ -265,17 +265,22 @@ func extractFromZip(archivePath string) (string, error) {
 	return "", fmt.Errorf("binary %q not found in zip archive", binaryName)
 }
 
+// replaceBinary finds the current executable and replaces it with newBinaryPath.
 func replaceBinary(newBinaryPath string) error {
 	currentPath, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("failed to find current executable: %w", err)
 	}
-
 	currentPath, err = filepath.EvalSymlinks(currentPath)
 	if err != nil {
 		return fmt.Errorf("failed to resolve symlinks: %w", err)
 	}
+	return swapBinary(newBinaryPath, currentPath)
+}
 
+// swapBinary replaces the binary at currentPath with the one at newBinaryPath.
+// It creates a .old backup, swaps in the new binary, and removes the backup.
+func swapBinary(newBinaryPath, currentPath string) error {
 	backupPath := currentPath + ".old"
 
 	// Rename current binary to backup.

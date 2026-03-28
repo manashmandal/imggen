@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -329,5 +330,107 @@ func TestCacheRoundtrip(t *testing.T) {
 	}
 	if got.LatestVersion != "4.5.6" {
 		t.Errorf("LatestVersion mismatch: got %s, want 4.5.6", got.LatestVersion)
+	}
+}
+
+func TestReadCache_CorruptJSON(t *testing.T) {
+	tmpDir := t.TempDir()
+	origCache := cacheDirOverride
+	cacheDirOverride = tmpDir
+	defer func() { cacheDirOverride = origCache }()
+
+	// Write corrupt JSON to cache file.
+	if err := os.WriteFile(filepath.Join(tmpDir, cacheFileName), []byte(`{garbage`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := readCache()
+	if err == nil {
+		t.Fatal("expected error for corrupt JSON cache, got nil")
+	}
+}
+
+func TestFetchLatestVersion_BadURL(t *testing.T) {
+	origURL := releaseURL
+	releaseURL = "http://[invalid"
+	defer func() { releaseURL = origURL }()
+
+	_, err := fetchLatestVersion()
+	if err == nil {
+		t.Fatal("expected error for bad URL, got nil")
+	}
+}
+
+func TestCacheDir_HomeUnset(t *testing.T) {
+	// When cacheDirOverride is empty and HOME is empty, os.UserHomeDir()
+	// fails and cacheDir() returns "".
+	origCache := cacheDirOverride
+	cacheDirOverride = ""
+	defer func() { cacheDirOverride = origCache }()
+
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", "")
+	defer os.Setenv("HOME", origHome)
+
+	dir := cacheDir()
+	if dir != "" {
+		t.Errorf("expected empty cacheDir when HOME is unset, got %q", dir)
+	}
+}
+
+func TestReadCache_NoCacheDir(t *testing.T) {
+	// When cacheDir() returns "", readCache should return an error.
+	origCache := cacheDirOverride
+	cacheDirOverride = ""
+	defer func() { cacheDirOverride = origCache }()
+
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", "")
+	defer os.Setenv("HOME", origHome)
+
+	_, err := readCache()
+	if err == nil {
+		t.Fatal("expected error when cache dir is empty, got nil")
+	}
+	if !strings.Contains(err.Error(), "could not determine cache directory") {
+		t.Errorf("expected 'could not determine cache directory', got: %s", err.Error())
+	}
+}
+
+func TestWriteCache_NoCacheDir(t *testing.T) {
+	// When cacheDir() returns "", writeCache should return an error.
+	origCache := cacheDirOverride
+	cacheDirOverride = ""
+	defer func() { cacheDirOverride = origCache }()
+
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", "")
+	defer os.Setenv("HOME", origHome)
+
+	err := writeCache(&updateCache{
+		LastCheck:     time.Now(),
+		LatestVersion: "1.0.0",
+	})
+	if err == nil {
+		t.Fatal("expected error when cache dir is empty, got nil")
+	}
+	if !strings.Contains(err.Error(), "could not determine cache directory") {
+		t.Errorf("expected 'could not determine cache directory', got: %s", err.Error())
+	}
+}
+
+func TestCheckForUpdate_InvalidLatestTag(t *testing.T) {
+	// Server returns an invalid semver tag. semver.Compare treats invalid
+	// versions as equal (returns 0), so no update is reported and no error.
+	ts := newTestServer("not-valid-semver-!!!!", http.StatusOK)
+	defer ts.Close()
+	setup(t, ts.URL)
+
+	info, err := CheckForUpdate("1.0.0")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if info != nil {
+		t.Fatalf("expected nil UpdateInfo for invalid latest tag, got %+v", info)
 	}
 }
