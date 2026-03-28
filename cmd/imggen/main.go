@@ -26,6 +26,7 @@ import (
 	"github.com/manash/imggen/internal/register"
 	"github.com/manash/imggen/internal/repl"
 	"github.com/manash/imggen/internal/session"
+	"github.com/manash/imggen/internal/update"
 	"github.com/manash/imggen/internal/workflow"
 	"github.com/manash/imggen/pkg/models"
 )
@@ -118,6 +119,10 @@ var (
 	flagDescribeDetail bool
 )
 
+var (
+	flagUpdateCheck bool
+)
+
 type App struct {
 	Out          io.Writer
 	Err          io.Writer
@@ -186,6 +191,16 @@ func main() {
 func run() error {
 	app := DefaultApp()
 	rootCmd := newRootCmd(app)
+
+	// Background version check (non-blocking)
+	go func() {
+		info, err := update.CheckForUpdate(version)
+		if err != nil || info == nil {
+			return
+		}
+		fmt.Fprintf(os.Stderr, "\033[33mA new version of imggen is available: v%s → v%s. Run \"imggen update\" to upgrade.\033[0m\n", info.CurrentVersion, info.LatestVersion)
+	}()
+
 	return rootCmd.Execute()
 }
 
@@ -268,6 +283,7 @@ OCR:
 	cmd.AddCommand(newVideoCmd(app))
 	cmd.AddCommand(newEditCmd(app))
 	cmd.AddCommand(newDescribeCmd(app))
+	cmd.AddCommand(newUpdateCmd(app))
 
 	return cmd
 }
@@ -2125,4 +2141,45 @@ func runKeysDelete(app *App) error {
 
 	fmt.Fprintf(app.Out, "Deleted key for %s\n", provider)
 	return nil
+}
+
+func newUpdateCmd(app *App) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "update",
+		Short: "Update imggen to the latest version",
+		Long: `Check for and install the latest version of imggen.
+
+By default, downloads and installs the latest release from GitHub.
+Use --check to only check without installing.
+
+Examples:
+  imggen update
+  imggen update --check`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runUpdate(cmd, args, app)
+		},
+	}
+
+	cmd.Flags().BoolVar(&flagUpdateCheck, "check", false, "only check for updates, don't install")
+
+	return cmd
+}
+
+func runUpdate(_ *cobra.Command, _ []string, app *App) error {
+	if flagUpdateCheck {
+		info, err := update.CheckForUpdate(version)
+		if err != nil {
+			return fmt.Errorf("update check failed: %w", err)
+		}
+		if info == nil {
+			fmt.Fprintf(app.Out, "imggen %s is the latest version.\n", version)
+			return nil
+		}
+		fmt.Fprintf(app.Out, "A new version is available: v%s → v%s\n", info.CurrentVersion, info.LatestVersion)
+		fmt.Fprintf(app.Out, "Run \"imggen update\" to upgrade.\n")
+		return nil
+	}
+
+	return update.SelfUpdate(version, app.Out)
 }
