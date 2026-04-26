@@ -34,6 +34,8 @@ type apiRequest struct {
 	Background        string `json:"background,omitempty"`
 	OutputCompression *int   `json:"output_compression,omitempty"`
 	Moderation        string `json:"moderation,omitempty"`
+	Stream            bool   `json:"stream,omitempty"`
+	PartialImages     *int   `json:"partial_images,omitempty"`
 }
 
 type apiResponse struct {
@@ -155,6 +157,47 @@ func (p *Provider) Generate(ctx context.Context, req *models.Request) (*models.R
 	}
 
 	response, err := p.buildResponse(apiResp)
+	if err != nil {
+		return nil, err
+	}
+
+	response.Cost = p.costCalc.Calculate(models.ProviderOpenAI, req.Model, req.Size, req.Quality, len(response.Images))
+	return response, nil
+}
+
+// GenerateStream invokes the image generation endpoint with stream=true and
+// dispatches each SSE event to onEvent. Only gpt-image-2 supports streaming;
+// other models return ErrStreamingNotSupported.
+func (p *Provider) GenerateStream(ctx context.Context, req *models.Request, onEvent provider.StreamHandler) (*models.Response, error) {
+	if req.Model != streamingModelOnly {
+		return nil, fmt.Errorf("%w: %s", ErrStreamingNotSupported, req.Model)
+	}
+	if req.PartialImages < 0 || req.PartialImages > 3 {
+		return nil, fmt.Errorf("partial_images must be 0-3, got %d", req.PartialImages)
+	}
+
+	apiReq := p.buildAPIRequest(req)
+	apiReq.Stream = true
+	if req.PartialImages > 0 {
+		n := req.PartialImages
+		apiReq.PartialImages = &n
+	}
+
+	jsonData, err := json.Marshal(apiReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	url := p.baseURL + "/images/generations"
+	httpReq, err := http.NewRequest(http.MethodPost, url, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	p.logRequest(http.MethodPost, url, httpReq.Header, jsonData)
+
+	response, err := p.streamHTTP(ctx, httpReq, onEvent)
 	if err != nil {
 		return nil, err
 	}

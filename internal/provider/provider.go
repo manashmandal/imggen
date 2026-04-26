@@ -47,6 +47,17 @@ type ResponsesProvider interface {
 	GenerateWithResponses(ctx context.Context, req *models.ResponsesRequest) (*models.ResponsesResponse, error)
 }
 
+// StreamHandler observes events from a streaming image generation/edit. It is
+// invoked synchronously while the response body is read and must not block.
+type StreamHandler func(*models.StreamEvent)
+
+// ImageStreamProvider is implemented by providers that support SSE streaming
+// for image generation and editing (currently only gpt-image-2).
+type ImageStreamProvider interface {
+	GenerateStream(ctx context.Context, req *models.Request, onEvent StreamHandler) (*models.Response, error)
+	EditStream(ctx context.Context, req *models.EditRequest, onEvent StreamHandler) (*models.Response, error)
+}
+
 type Config struct {
 	APIKey     string
 	BaseURL    string
