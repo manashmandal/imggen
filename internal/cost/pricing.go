@@ -10,6 +10,40 @@ type PricingKey struct {
 }
 
 var openAIPricing = map[PricingKey]float64{
+	// gpt-image-2 pricing — token-based; values below are per-image
+	// estimates extrapolated from OpenAI's published 1024x1024 reference
+	// (low ~$0.006, medium ~$0.053, high ~$0.211). Actual cost varies with
+	// prompt token count.
+	{Model: "gpt-image-2", Size: "1024x1024", Quality: "low"}:    0.006,
+	{Model: "gpt-image-2", Size: "1024x1024", Quality: "medium"}: 0.053,
+	{Model: "gpt-image-2", Size: "1024x1024", Quality: "high"}:   0.211,
+	{Model: "gpt-image-2", Size: "1024x1024", Quality: "auto"}:   0.053,
+
+	{Model: "gpt-image-2", Size: "1536x1024", Quality: "low"}:    0.009,
+	{Model: "gpt-image-2", Size: "1536x1024", Quality: "medium"}: 0.080,
+	{Model: "gpt-image-2", Size: "1536x1024", Quality: "high"}:   0.317,
+	{Model: "gpt-image-2", Size: "1536x1024", Quality: "auto"}:   0.080,
+
+	{Model: "gpt-image-2", Size: "1024x1536", Quality: "low"}:    0.009,
+	{Model: "gpt-image-2", Size: "1024x1536", Quality: "medium"}: 0.080,
+	{Model: "gpt-image-2", Size: "1024x1536", Quality: "high"}:   0.317,
+	{Model: "gpt-image-2", Size: "1024x1536", Quality: "auto"}:   0.080,
+
+	{Model: "gpt-image-2", Size: "2048x2048", Quality: "low"}:    0.024,
+	{Model: "gpt-image-2", Size: "2048x2048", Quality: "medium"}: 0.212,
+	{Model: "gpt-image-2", Size: "2048x2048", Quality: "high"}:   0.844,
+	{Model: "gpt-image-2", Size: "2048x2048", Quality: "auto"}:   0.212,
+
+	{Model: "gpt-image-2", Size: "2560x1440", Quality: "low"}:    0.021,
+	{Model: "gpt-image-2", Size: "2560x1440", Quality: "medium"}: 0.186,
+	{Model: "gpt-image-2", Size: "2560x1440", Quality: "high"}:   0.738,
+	{Model: "gpt-image-2", Size: "2560x1440", Quality: "auto"}:   0.186,
+
+	{Model: "gpt-image-2", Size: "auto", Quality: "low"}:    0.006,
+	{Model: "gpt-image-2", Size: "auto", Quality: "medium"}: 0.053,
+	{Model: "gpt-image-2", Size: "auto", Quality: "high"}:   0.211,
+	{Model: "gpt-image-2", Size: "auto", Quality: "auto"}:   0.053,
+
 	// gpt-image-1.5 pricing (20% cheaper than gpt-image-1)
 	{Model: "gpt-image-1.5", Size: "1024x1024", Quality: "low"}:    0.009,
 	{Model: "gpt-image-1.5", Size: "1024x1024", Quality: "medium"}: 0.034,

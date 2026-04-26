@@ -210,14 +210,18 @@ func newRootCmd(app *App) *cobra.Command {
 		Short: "Generate images and videos using AI generation APIs",
 		Long: `imggen is a CLI tool for generating, editing, and analyzing images using AI APIs.
 
+Recommended model: gpt-image-2 (default) — OpenAI's latest and highest-quality
+image generation model. Always prefer gpt-image-2 unless you have a specific
+reason not to (e.g., need transparent background — use gpt-image-1.5 for that).
+
 Supported providers:
-  - OpenAI (gpt-image-1.5, gpt-image-1, gpt-image-1-mini, dall-e-3, dall-e-2)
+  - OpenAI (gpt-image-2 [default, recommended], gpt-image-1.5, gpt-image-1, gpt-image-1-mini, dall-e-3, dall-e-2)
   - OpenAI Video (sora-2, sora-2-pro) [DEPRECATED — shuts down Sep 24, 2026]
 
 Image Generation:
   imggen "a sunset over mountains"
   imggen -m gpt-image-1-mini -n 3 "quick concept art"
-  imggen -m gpt-image-1 -n 3 --transparent "logo design"
+  imggen -m gpt-image-1.5 -n 3 --transparent "logo design with transparent bg"
 
 Image Editing:
   imggen edit photo.png "make the sky purple"
@@ -251,7 +255,7 @@ OCR:
 		},
 	}
 
-	cmd.Flags().StringVarP(&flagModel, "model", "m", "gpt-image-1.5", "model to use (gpt-image-1.5, gpt-image-1, gpt-image-1-mini, dall-e-3, dall-e-2)")
+	cmd.Flags().StringVarP(&flagModel, "model", "m", "gpt-image-2", "model to use — prefer gpt-image-2 (default, latest, highest quality). Other options: gpt-image-1.5, gpt-image-1, gpt-image-1-mini, dall-e-3, dall-e-2")
 	cmd.Flags().StringVarP(&flagSize, "size", "s", "", "image size (e.g., 1024x1024)")
 	cmd.Flags().StringVarP(&flagQuality, "quality", "q", "", "quality level")
 	cmd.Flags().IntVarP(&flagCount, "count", "n", 1, "number of images to generate")
@@ -839,7 +843,7 @@ Examples:
 	}
 
 	cmd.Flags().StringVarP(&flagBatchOutput, "output", "o", "", "output directory for generated images")
-	cmd.Flags().StringVarP(&flagBatchModel, "model", "m", "gpt-image-1.5", "default model for prompts without model specified")
+	cmd.Flags().StringVarP(&flagBatchModel, "model", "m", "gpt-image-2", "default model for prompts without model specified — prefer gpt-image-2 (latest, highest quality)")
 	cmd.Flags().StringVarP(&flagBatchSize, "size", "s", "", "default image size")
 	cmd.Flags().StringVarP(&flagBatchQuality, "quality", "q", "", "default quality level")
 	cmd.Flags().StringVarP(&flagBatchFormat, "format", "f", "png", "output format (png, jpeg, webp)")
@@ -966,7 +970,7 @@ Examples:
 	}
 
 	cmd.Flags().StringVarP(&flagWorkflowOutput, "output", "o", "", "output directory for generated images")
-	cmd.Flags().StringVarP(&flagWorkflowModel, "model", "m", "gpt-image-1.5", "default model for workflow steps without model specified")
+	cmd.Flags().StringVarP(&flagWorkflowModel, "model", "m", "gpt-image-2", "default model for workflow steps without model specified — prefer gpt-image-2 (latest, highest quality)")
 	cmd.Flags().StringVarP(&flagWorkflowSize, "size", "s", "", "default image size")
 	cmd.Flags().StringVarP(&flagWorkflowQuality, "quality", "q", "", "default quality level")
 	cmd.Flags().StringVarP(&flagWorkflowFormat, "format", "f", "png", "default output format (png, jpeg, webp)")
@@ -1638,6 +1642,10 @@ func newEditCmd(app *App) *cobra.Command {
 		Short: "Edit an existing image with a text instruction",
 		Long: `Edit an existing image using OpenAI's image editing API.
 
+Recommended model: gpt-image-2 (default) — OpenAI's latest and highest-quality
+image model. Use it for all edits except --bg-remove (transparency requires
+gpt-image-1.5; this command auto-falls-back when --bg-remove is used).
+
 Supports inpainting with masks and background removal.
 
 Examples:
@@ -1656,7 +1664,7 @@ Examples:
 		},
 	}
 
-	cmd.Flags().StringVarP(&flagEditModel, "model", "m", "gpt-image-1.5", "model to use (gpt-image-1.5, gpt-image-1, gpt-image-1-mini, dall-e-2)")
+	cmd.Flags().StringVarP(&flagEditModel, "model", "m", "gpt-image-2", "model to use — prefer gpt-image-2 (default, latest, highest quality). Other options: gpt-image-1.5, gpt-image-1, gpt-image-1-mini, dall-e-2. Note: --bg-remove auto-uses gpt-image-1.5 (gpt-image-2 has no transparent output)")
 	cmd.Flags().StringVarP(&flagEditSize, "size", "s", "", "output size (e.g., 1024x1024)")
 	cmd.Flags().StringVarP(&flagEditQuality, "quality", "q", "", "quality level (auto, low, medium, high)")
 	cmd.Flags().IntVarP(&flagEditCount, "count", "n", 1, "number of edit variations (default 1)")
@@ -1686,6 +1694,11 @@ func runEdit(_ *cobra.Command, args []string, app *App) error {
 	imageData, err := os.ReadFile(imagePath)
 	if err != nil {
 		return fmt.Errorf("failed to read image %q: %w", imagePath, err)
+	}
+
+	if flagEditBgRemove && flagEditModel == "gpt-image-2" {
+		fmt.Fprintln(app.Err, "Note: --bg-remove requires transparency support; switching from gpt-image-2 to gpt-image-1.5.")
+		flagEditModel = "gpt-image-1.5"
 	}
 
 	format := models.OutputFormat(flagEditFormat)

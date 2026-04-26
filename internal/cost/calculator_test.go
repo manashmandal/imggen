@@ -13,6 +13,40 @@ func TestNewCalculator(t *testing.T) {
 	}
 }
 
+func TestCalculator_Calculate_OpenAI_GPTImage2(t *testing.T) {
+	calc := NewCalculator()
+
+	tests := []struct {
+		name     string
+		size     string
+		quality  string
+		count    int
+		expected float64
+	}{
+		{"1024x1024 low", "1024x1024", "low", 1, 0.006},
+		{"1024x1024 medium", "1024x1024", "medium", 1, 0.053},
+		{"1024x1024 high", "1024x1024", "high", 1, 0.211},
+		{"1024x1024 auto", "1024x1024", "auto", 1, 0.053},
+		{"1536x1024 medium", "1536x1024", "medium", 1, 0.080},
+		{"2048x2048 high", "2048x2048", "high", 1, 0.844},
+		{"2560x1440 medium", "2560x1440", "medium", 1, 0.186},
+		{"auto auto", "auto", "auto", 1, 0.053},
+		{"3 images medium", "1024x1024", "medium", 3, 0.159},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := calc.Calculate(models.ProviderOpenAI, "gpt-image-2", tt.size, tt.quality, tt.count)
+			if !floatEquals(result.Total, tt.expected) {
+				t.Errorf("expected total %.4f, got %.4f", tt.expected, result.Total)
+			}
+			if result.Currency != CurrencyUSD {
+				t.Errorf("expected currency %s, got %s", CurrencyUSD, result.Currency)
+			}
+		})
+	}
+}
+
 func TestCalculator_Calculate_OpenAI_GPTImage1(t *testing.T) {
 	calc := NewCalculator()
 

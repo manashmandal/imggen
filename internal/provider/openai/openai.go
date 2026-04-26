@@ -208,6 +208,17 @@ func (p *Provider) generateWithReferences(ctx context.Context, req *models.Reque
 
 func isGPTImageModel(model string) bool {
 	switch model {
+	case "gpt-image-2", "gpt-image-1.5", "gpt-image-1", "gpt-image-1-mini":
+		return true
+	}
+	return false
+}
+
+// supportsInputFidelity reports whether the model accepts the input_fidelity
+// edit param. gpt-image-2 always uses high fidelity automatically and rejects
+// the param; older GPT image models accept it.
+func supportsInputFidelity(model string) bool {
+	switch model {
 	case "gpt-image-1.5", "gpt-image-1", "gpt-image-1-mini":
 		return true
 	}

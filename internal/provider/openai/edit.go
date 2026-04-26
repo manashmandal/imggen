@@ -103,7 +103,7 @@ func (p *Provider) Edit(ctx context.Context, req *models.EditRequest) (*models.R
 		}
 	}
 
-	if req.InputFidelity != "" {
+	if req.InputFidelity != "" && supportsInputFidelity(req.Model) {
 		if err := writer.WriteField("input_fidelity", req.InputFidelity); err != nil {
 			return nil, fmt.Errorf("failed to write input_fidelity: %w", err)
 		}
