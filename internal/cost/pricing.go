@@ -127,6 +127,30 @@ func GetOpenAIPrice(model, size, quality string) (float64, bool) {
 	return price, ok
 }
 
+// gpt-image-2 token-based pricing in USD per 1M tokens.
+// Source: https://openai.com/api/pricing/ (as of 2026-04-21 launch).
+const (
+	gptImage2TextInputPer1M  = 5.00
+	gptImage2ImageInputPer1M = 8.00
+	gptImage2OutputPer1M     = 30.00
+)
+
+// GPTImage2TokenCost returns the per-image USD cost from a token-usage
+// breakdown. Output tokens are billed at the image-output rate; text output
+// is negligible for image generation. If the input details are missing the
+// whole input is billed at the text-input rate, which slightly under-bills
+// edits with reference images.
+func GPTImage2TokenCost(textIn, imageIn, totalIn, output int) float64 {
+	textTokens := textIn
+	imageTokens := imageIn
+	if textTokens == 0 && imageTokens == 0 {
+		textTokens = totalIn
+	}
+	return float64(textTokens)/1_000_000*gptImage2TextInputPer1M +
+		float64(imageTokens)/1_000_000*gptImage2ImageInputPer1M +
+		float64(output)/1_000_000*gptImage2OutputPer1M
+}
+
 // Video pricing (USD per second)
 var videoPricing = map[string]float64{
 	"sora-2":     0.10, // $0.10 per second

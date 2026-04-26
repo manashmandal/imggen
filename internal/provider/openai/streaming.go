@@ -24,9 +24,28 @@ const streamingModelOnly = "gpt-image-2"
 var ErrStreamingNotSupported = errors.New("streaming not supported by model")
 
 type streamUsage struct {
-	InputTokens  int `json:"input_tokens"`
-	OutputTokens int `json:"output_tokens"`
-	TotalTokens  int `json:"total_tokens"`
+	InputTokens        int                       `json:"input_tokens"`
+	OutputTokens       int                       `json:"output_tokens"`
+	TotalTokens        int                       `json:"total_tokens"`
+	InputTokensDetails *streamInputTokensDetails `json:"input_tokens_details,omitempty"`
+}
+
+type streamInputTokensDetails struct {
+	TextTokens  int `json:"text_tokens"`
+	ImageTokens int `json:"image_tokens"`
+}
+
+func (u *streamUsage) toModel() *models.TokenUsage {
+	out := &models.TokenUsage{
+		InputTokens:  u.InputTokens,
+		OutputTokens: u.OutputTokens,
+		TotalTokens:  u.TotalTokens,
+	}
+	if u.InputTokensDetails != nil {
+		out.TextInputTokens = u.InputTokensDetails.TextTokens
+		out.ImageInputTokens = u.InputTokensDetails.ImageTokens
+	}
+	return out
 }
 
 type sseEvent struct {
@@ -90,11 +109,7 @@ func processStream(r io.Reader, onEvent provider.StreamHandler) (*models.Respons
 		Images: []models.GeneratedImage{{Data: data, Base64: final.B64JSON, Index: 0}},
 	}
 	if final.Usage != nil {
-		resp.Usage = &models.TokenUsage{
-			InputTokens:  final.Usage.InputTokens,
-			OutputTokens: final.Usage.OutputTokens,
-			TotalTokens:  final.Usage.TotalTokens,
-		}
+		resp.Usage = final.Usage.toModel()
 	}
 	return resp, nil
 }
@@ -135,11 +150,7 @@ func dispatchCompleted(ev *sseEvent, onEvent provider.StreamHandler) error {
 		Quality: ev.Quality,
 	}
 	if ev.Usage != nil {
-		out.Usage = &models.TokenUsage{
-			InputTokens:  ev.Usage.InputTokens,
-			OutputTokens: ev.Usage.OutputTokens,
-			TotalTokens:  ev.Usage.TotalTokens,
-		}
+		out.Usage = ev.Usage.toModel()
 	}
 	onEvent(out)
 	return nil

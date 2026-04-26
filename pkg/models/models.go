@@ -234,10 +234,14 @@ type Response struct {
 
 // TokenUsage captures the token accounting returned by streaming completed
 // events. Only populated when the underlying API supplies it (gpt-image-2).
+// TextInputTokens and ImageInputTokens come from the input_tokens_details
+// breakdown and may be zero if the response did not include them.
 type TokenUsage struct {
-	InputTokens  int
-	OutputTokens int
-	TotalTokens  int
+	InputTokens      int
+	OutputTokens     int
+	TotalTokens      int
+	TextInputTokens  int
+	ImageInputTokens int
 }
 
 // StreamEventType distinguishes partial-frame events from the final completed

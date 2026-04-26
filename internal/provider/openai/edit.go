@@ -126,7 +126,7 @@ func (p *Provider) EditStream(ctx context.Context, req *models.EditRequest, onEv
 	if isGPTImageModel(req.Model) && quality == "" {
 		quality = "auto"
 	}
-	response.Cost = p.costCalc.Calculate(models.ProviderOpenAI, req.Model, req.Size, quality, len(response.Images))
+	response.Cost = p.streamCost(req.Model, req.Size, quality, response)
 	return response, nil
 }
 

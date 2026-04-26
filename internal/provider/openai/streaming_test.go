@@ -21,7 +21,7 @@ func TestProcessStream_PartialThenCompleted(t *testing.T) {
 		``,
 		`data: {"type":"image_generation.partial_image","b64_json":"AwQF","partial_image_index":1,"size":"1024x1024","quality":"medium"}`,
 		``,
-		`data: {"type":"image_generation.completed","b64_json":"BgcICQ==","size":"1024x1024","quality":"medium","usage":{"input_tokens":120,"output_tokens":4310,"total_tokens":4430}}`,
+		`data: {"type":"image_generation.completed","b64_json":"BgcICQ==","size":"1024x1024","quality":"medium","usage":{"input_tokens":120,"output_tokens":4310,"total_tokens":4430,"input_tokens_details":{"text_tokens":100,"image_tokens":20}}}`,
 		``,
 		`data: [DONE]`,
 		``,
@@ -58,6 +58,10 @@ func TestProcessStream_PartialThenCompleted(t *testing.T) {
 	}
 	if resp.Usage == nil || resp.Usage.TotalTokens != 4430 {
 		t.Errorf("resp.Usage = %+v, want total=4430", resp.Usage)
+	}
+	if resp.Usage.TextInputTokens != 100 || resp.Usage.ImageInputTokens != 20 {
+		t.Errorf("input details: text=%d image=%d, want text=100 image=20",
+			resp.Usage.TextInputTokens, resp.Usage.ImageInputTokens)
 	}
 	decoded, _ := base64.StdEncoding.DecodeString("BgcICQ==")
 	if !bytes.Equal(resp.Images[0].Data, decoded) {
@@ -173,6 +177,14 @@ func TestGenerateStream_HappyPath(t *testing.T) {
 	}
 	if resp.Usage == nil || resp.Usage.TotalTokens != 3 {
 		t.Errorf("usage = %+v, want total=3", resp.Usage)
+	}
+	// Token-based pricing: 1 input * $5/1M + 2 output * $30/1M = 0.000005 + 0.00006 = 0.000065.
+	if resp.Cost == nil {
+		t.Fatal("expected Cost to be populated from token usage")
+	}
+	want := 0.000065
+	if diff := resp.Cost.Total - want; diff > 1e-9 || diff < -1e-9 {
+		t.Errorf("token-based cost = %.7f, want %.7f", resp.Cost.Total, want)
 	}
 }
 

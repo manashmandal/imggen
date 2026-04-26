@@ -202,8 +202,17 @@ func (p *Provider) GenerateStream(ctx context.Context, req *models.Request, onEv
 		return nil, err
 	}
 
-	response.Cost = p.costCalc.Calculate(models.ProviderOpenAI, req.Model, req.Size, req.Quality, len(response.Images))
+	response.Cost = p.streamCost(req.Model, req.Size, req.Quality, response)
 	return response, nil
+}
+
+// streamCost prefers token-based pricing when the streaming response carries
+// a usage breakdown; otherwise falls back to the per-image flat-rate map.
+func (p *Provider) streamCost(model, size, quality string, resp *models.Response) *models.CostInfo {
+	if resp.Usage != nil {
+		return p.costCalc.CalculateUsage(models.ProviderOpenAI, model, resp.Usage, len(resp.Images))
+	}
+	return p.costCalc.Calculate(models.ProviderOpenAI, model, size, quality, len(resp.Images))
 }
 
 func (p *Provider) generateWithReferences(ctx context.Context, req *models.Request) (*models.Response, error) {
