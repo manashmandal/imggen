@@ -804,6 +804,58 @@ func TestEditRequest_Validate_Success(t *testing.T) {
 	}
 }
 
+func TestDefaultRegistry_GPTImage2(t *testing.T) {
+	r := DefaultRegistry()
+	cap, ok := r.Get("gpt-image-2")
+	if !ok {
+		t.Fatal("gpt-image-2 not found in registry")
+	}
+
+	if cap.SupportsTransparency {
+		t.Error("gpt-image-2 should NOT support transparency (gpt-image-2 doesn't support transparent backgrounds)")
+	}
+	if !cap.SupportsEdit {
+		t.Error("gpt-image-2 should support edit")
+	}
+	if cap.MaxImages != 10 {
+		t.Errorf("gpt-image-2 MaxImages = %d, want 10", cap.MaxImages)
+	}
+	if cap.DefaultSize != "auto" {
+		t.Errorf("gpt-image-2 DefaultSize = %q, want auto", cap.DefaultSize)
+	}
+
+	expectedSizes := []string{"1024x1024", "1536x1024", "1024x1536", "2048x2048", "2560x1440", "auto"}
+	for _, s := range expectedSizes {
+		if !slices.Contains(cap.SupportedSizes, s) {
+			t.Errorf("gpt-image-2 missing size %s", s)
+		}
+	}
+
+	expectedQualities := []string{"auto", "low", "medium", "high"}
+	for _, q := range expectedQualities {
+		if !slices.Contains(cap.SupportedQualities, q) {
+			t.Errorf("gpt-image-2 missing quality %s", q)
+		}
+	}
+}
+
+func TestGPTImage2_RejectsTransparency(t *testing.T) {
+	r := DefaultRegistry()
+	cap, ok := r.Get("gpt-image-2")
+	if !ok {
+		t.Fatal("gpt-image-2 not registered")
+	}
+	req := &Request{
+		Prompt:      "test",
+		Count:       1,
+		Transparent: true,
+		Format:      FormatPNG,
+	}
+	if err := cap.Validate(req); !errors.Is(err, ErrTransparencyNotSupported) {
+		t.Errorf("Validate() error = %v, want %v", err, ErrTransparencyNotSupported)
+	}
+}
+
 func TestDefaultRegistry_GPTImage1Mini(t *testing.T) {
 	r := DefaultRegistry()
 	cap, ok := r.Get("gpt-image-1-mini")

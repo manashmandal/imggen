@@ -34,6 +34,8 @@ type apiRequest struct {
 	Background        string `json:"background,omitempty"`
 	OutputCompression *int   `json:"output_compression,omitempty"`
 	Moderation        string `json:"moderation,omitempty"`
+	Stream            bool   `json:"stream,omitempty"`
+	PartialImages     *int   `json:"partial_images,omitempty"`
 }
 
 type apiResponse struct {
@@ -163,6 +165,56 @@ func (p *Provider) Generate(ctx context.Context, req *models.Request) (*models.R
 	return response, nil
 }
 
+// GenerateStream invokes the image generation endpoint with stream=true and
+// dispatches each SSE event to onEvent. Only gpt-image-2 supports streaming;
+// other models return ErrStreamingNotSupported.
+func (p *Provider) GenerateStream(ctx context.Context, req *models.Request, onEvent provider.StreamHandler) (*models.Response, error) {
+	if req.Model != streamingModelOnly {
+		return nil, fmt.Errorf("%w: %s", ErrStreamingNotSupported, req.Model)
+	}
+	if req.PartialImages < 0 || req.PartialImages > 3 {
+		return nil, fmt.Errorf("partial_images must be 0-3, got %d", req.PartialImages)
+	}
+
+	apiReq := p.buildAPIRequest(req)
+	apiReq.Stream = true
+	if req.PartialImages > 0 {
+		n := req.PartialImages
+		apiReq.PartialImages = &n
+	}
+
+	jsonData, err := json.Marshal(apiReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	url := p.baseURL + "/images/generations"
+	httpReq, err := http.NewRequest(http.MethodPost, url, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	p.logRequest(http.MethodPost, url, httpReq.Header, jsonData)
+
+	response, err := p.streamHTTP(ctx, httpReq, onEvent)
+	if err != nil {
+		return nil, err
+	}
+
+	response.Cost = p.streamCost(req.Model, req.Size, req.Quality, response)
+	return response, nil
+}
+
+// streamCost prefers token-based pricing when the streaming response carries
+// a usage breakdown; otherwise falls back to the per-image flat-rate map.
+func (p *Provider) streamCost(model, size, quality string, resp *models.Response) *models.CostInfo {
+	if resp.Usage != nil {
+		return p.costCalc.CalculateUsage(models.ProviderOpenAI, model, resp.Usage, len(resp.Images))
+	}
+	return p.costCalc.Calculate(models.ProviderOpenAI, model, size, quality, len(resp.Images))
+}
+
 func (p *Provider) generateWithReferences(ctx context.Context, req *models.Request) (*models.Response, error) {
 	if !p.SupportsEdit(req.Model) {
 		return nil, fmt.Errorf("%w: %s", provider.ErrEditNotSupported, req.Model)
@@ -207,6 +259,17 @@ func (p *Provider) generateWithReferences(ctx context.Context, req *models.Reque
 }
 
 func isGPTImageModel(model string) bool {
+	switch model {
+	case "gpt-image-2", "gpt-image-1.5", "gpt-image-1", "gpt-image-1-mini":
+		return true
+	}
+	return false
+}
+
+// supportsInputFidelity reports whether the model accepts the input_fidelity
+// edit param. gpt-image-2 always uses high fidelity automatically and rejects
+// the param; older GPT image models accept it.
+func supportsInputFidelity(model string) bool {
 	switch model {
 	case "gpt-image-1.5", "gpt-image-1", "gpt-image-1-mini":
 		return true

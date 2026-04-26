@@ -10,6 +10,40 @@ type PricingKey struct {
 }
 
 var openAIPricing = map[PricingKey]float64{
+	// gpt-image-2 pricing — token-based; values below are per-image
+	// estimates extrapolated from OpenAI's published 1024x1024 reference
+	// (low ~$0.006, medium ~$0.053, high ~$0.211). Actual cost varies with
+	// prompt token count.
+	{Model: "gpt-image-2", Size: "1024x1024", Quality: "low"}:    0.006,
+	{Model: "gpt-image-2", Size: "1024x1024", Quality: "medium"}: 0.053,
+	{Model: "gpt-image-2", Size: "1024x1024", Quality: "high"}:   0.211,
+	{Model: "gpt-image-2", Size: "1024x1024", Quality: "auto"}:   0.053,
+
+	{Model: "gpt-image-2", Size: "1536x1024", Quality: "low"}:    0.009,
+	{Model: "gpt-image-2", Size: "1536x1024", Quality: "medium"}: 0.080,
+	{Model: "gpt-image-2", Size: "1536x1024", Quality: "high"}:   0.317,
+	{Model: "gpt-image-2", Size: "1536x1024", Quality: "auto"}:   0.080,
+
+	{Model: "gpt-image-2", Size: "1024x1536", Quality: "low"}:    0.009,
+	{Model: "gpt-image-2", Size: "1024x1536", Quality: "medium"}: 0.080,
+	{Model: "gpt-image-2", Size: "1024x1536", Quality: "high"}:   0.317,
+	{Model: "gpt-image-2", Size: "1024x1536", Quality: "auto"}:   0.080,
+
+	{Model: "gpt-image-2", Size: "2048x2048", Quality: "low"}:    0.024,
+	{Model: "gpt-image-2", Size: "2048x2048", Quality: "medium"}: 0.212,
+	{Model: "gpt-image-2", Size: "2048x2048", Quality: "high"}:   0.844,
+	{Model: "gpt-image-2", Size: "2048x2048", Quality: "auto"}:   0.212,
+
+	{Model: "gpt-image-2", Size: "2560x1440", Quality: "low"}:    0.021,
+	{Model: "gpt-image-2", Size: "2560x1440", Quality: "medium"}: 0.186,
+	{Model: "gpt-image-2", Size: "2560x1440", Quality: "high"}:   0.738,
+	{Model: "gpt-image-2", Size: "2560x1440", Quality: "auto"}:   0.186,
+
+	{Model: "gpt-image-2", Size: "auto", Quality: "low"}:    0.006,
+	{Model: "gpt-image-2", Size: "auto", Quality: "medium"}: 0.053,
+	{Model: "gpt-image-2", Size: "auto", Quality: "high"}:   0.211,
+	{Model: "gpt-image-2", Size: "auto", Quality: "auto"}:   0.053,
+
 	// gpt-image-1.5 pricing (20% cheaper than gpt-image-1)
 	{Model: "gpt-image-1.5", Size: "1024x1024", Quality: "low"}:    0.009,
 	{Model: "gpt-image-1.5", Size: "1024x1024", Quality: "medium"}: 0.034,
@@ -91,6 +125,30 @@ func GetOpenAIPrice(model, size, quality string) (float64, bool) {
 	key := PricingKey{Model: model, Size: size, Quality: quality}
 	price, ok := openAIPricing[key]
 	return price, ok
+}
+
+// gpt-image-2 token-based pricing in USD per 1M tokens.
+// Source: https://openai.com/api/pricing/ (as of 2026-04-21 launch).
+const (
+	gptImage2TextInputPer1M  = 5.00
+	gptImage2ImageInputPer1M = 8.00
+	gptImage2OutputPer1M     = 30.00
+)
+
+// GPTImage2TokenCost returns the per-image USD cost from a token-usage
+// breakdown. Output tokens are billed at the image-output rate; text output
+// is negligible for image generation. If the input details are missing the
+// whole input is billed at the text-input rate, which slightly under-bills
+// edits with reference images.
+func GPTImage2TokenCost(textIn, imageIn, totalIn, output int) float64 {
+	textTokens := textIn
+	imageTokens := imageIn
+	if textTokens == 0 && imageTokens == 0 {
+		textTokens = totalIn
+	}
+	return float64(textTokens)/1_000_000*gptImage2TextInputPer1M +
+		float64(imageTokens)/1_000_000*gptImage2ImageInputPer1M +
+		float64(output)/1_000_000*gptImage2OutputPer1M
 }
 
 // Video pricing (USD per second)

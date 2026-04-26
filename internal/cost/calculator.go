@@ -12,6 +12,30 @@ func NewCalculator() *Calculator {
 	return &Calculator{}
 }
 
+// CalculateUsage returns a CostInfo computed from token usage. It is more
+// accurate than Calculate for token-billed models like gpt-image-2 when
+// streaming surfaces token counts on the completed event. Falls back to the
+// flat-rate Calculate result for models without a token-pricing rule.
+func (c *Calculator) CalculateUsage(provider models.ProviderType, model string, usage *models.TokenUsage, count int) *models.CostInfo {
+	if usage == nil || count <= 0 {
+		return &models.CostInfo{Currency: CurrencyUSD}
+	}
+	if provider == models.ProviderOpenAI && model == "gpt-image-2" {
+		total := GPTImage2TokenCost(
+			usage.TextInputTokens,
+			usage.ImageInputTokens,
+			usage.InputTokens,
+			usage.OutputTokens,
+		)
+		return &models.CostInfo{
+			PerImage: total / float64(count),
+			Total:    total,
+			Currency: CurrencyUSD,
+		}
+	}
+	return c.Calculate(provider, model, "", "", count)
+}
+
 func (c *Calculator) Calculate(provider models.ProviderType, model, size, quality string, count int) *models.CostInfo {
 	var perImage float64
 
@@ -47,6 +71,8 @@ func (c *Calculator) calculateOpenAI(model, size, quality string) float64 {
 
 	// Default fallback prices
 	switch model {
+	case "gpt-image-2":
+		return 0.053 // medium quality default
 	case "gpt-image-1.5":
 		return 0.034 // medium quality default
 	case "gpt-image-1":
@@ -102,10 +128,10 @@ func (c *Calculator) CalculateOCR(model string, inputTokens, outputTokens int) *
 		inputCostPer1M = 1.75   // $1.75 per 1M input tokens
 		outputCostPer1M = 14.00 // $14.00 per 1M output tokens
 	case "gpt-5-mini":
-		inputCostPer1M = 0.25 // $0.25 per 1M input tokens
+		inputCostPer1M = 0.25  // $0.25 per 1M input tokens
 		outputCostPer1M = 2.00 // $2.00 per 1M output tokens
 	case "gpt-5-nano":
-		inputCostPer1M = 0.05 // $0.05 per 1M input tokens
+		inputCostPer1M = 0.05  // $0.05 per 1M input tokens
 		outputCostPer1M = 0.40 // $0.40 per 1M output tokens
 	default:
 		// Default to gpt-5-mini pricing

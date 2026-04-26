@@ -162,6 +162,8 @@ type Request struct {
 	Consistency       *Consistency
 	OutputCompression *int   // 0-100, nil means not set (server default)
 	Moderation        string // "low" or "auto" (GPT models only)
+	Stream            bool   // SSE streaming with partial frames (gpt-image-2 only)
+	PartialImages     int    // 0-3 partial frames; each adds 100 output tokens
 }
 
 func NewRequest(prompt string) *Request {
@@ -187,6 +189,8 @@ type EditRequest struct {
 	ImageMimeTypes    []string
 	OutputCompression *int   // 0-100, nil means not set (server default)
 	Moderation        string // "low" or "auto" (GPT models only)
+	Stream            bool   // SSE streaming with partial frames (gpt-image-2 only)
+	PartialImages     int    // 0-3 partial frames; each adds 100 output tokens
 }
 
 func NewEditRequest(image []byte, prompt string) *EditRequest {
@@ -225,6 +229,42 @@ type Response struct {
 	Images        []GeneratedImage
 	RevisedPrompt string
 	Cost          *CostInfo
+	Usage         *TokenUsage // populated by streaming endpoints
+}
+
+// TokenUsage captures the token accounting returned by streaming completed
+// events. Only populated when the underlying API supplies it (gpt-image-2).
+// TextInputTokens and ImageInputTokens come from the input_tokens_details
+// breakdown and may be zero if the response did not include them.
+type TokenUsage struct {
+	InputTokens      int
+	OutputTokens     int
+	TotalTokens      int
+	TextInputTokens  int
+	ImageInputTokens int
+}
+
+// StreamEventType distinguishes partial-frame events from the final completed
+// event during streaming generation.
+type StreamEventType string
+
+const (
+	StreamEventPartial   StreamEventType = "partial"
+	StreamEventCompleted StreamEventType = "completed"
+)
+
+// StreamEvent is delivered to a StreamHandler during streaming image
+// generation or editing. Partial events arrive 0..PartialImages-1 times; a
+// single Completed event arrives at the end carrying the final image plus
+// token usage.
+type StreamEvent struct {
+	Type    StreamEventType
+	Index   int    // partial_image_index; -1 on completed events
+	Data    []byte // decoded image bytes
+	Base64  string // raw b64_json
+	Size    string
+	Quality string
+	Usage   *TokenUsage // populated only on Completed
 }
 
 type GeneratedImage struct {
@@ -447,6 +487,19 @@ func (r *ModelRegistry) ListVideoModels() []string {
 
 func DefaultRegistry() *ModelRegistry {
 	r := NewModelRegistry()
+
+	r.Register(&ModelCapabilities{
+		Name:                 "gpt-image-2",
+		Provider:             ProviderOpenAI,
+		SupportedSizes:       []string{"1024x1024", "1536x1024", "1024x1536", "2048x2048", "2560x1440", "auto"},
+		SupportedQualities:   []string{"auto", "low", "medium", "high"},
+		MaxImages:            10,
+		DefaultSize:          "auto",
+		DefaultQuality:       "auto",
+		SupportsStyle:        false,
+		SupportsTransparency: false,
+		SupportsEdit:         true,
+	})
 
 	r.Register(&ModelCapabilities{
 		Name:                 "gpt-image-1.5",

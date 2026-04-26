@@ -105,11 +105,12 @@ func TestProvider_ListModels(t *testing.T) {
 	modelsList := p.ListModels()
 
 	expected := map[string]bool{
-		"gpt-image-1.5":   true,
-		"gpt-image-1":     true,
+		"gpt-image-2":      true,
+		"gpt-image-1.5":    true,
+		"gpt-image-1":      true,
 		"gpt-image-1-mini": true,
-		"dall-e-3":        true,
-		"dall-e-2":        true,
+		"dall-e-3":         true,
+		"dall-e-2":         true,
 	}
 
 	if len(modelsList) != len(expected) {
@@ -2357,6 +2358,7 @@ func TestIsGPTImageModel(t *testing.T) {
 		model string
 		want  bool
 	}{
+		{"gpt-image-2", true},
 		{"gpt-image-1.5", true},
 		{"gpt-image-1", true},
 		{"gpt-image-1-mini", true},
@@ -2369,6 +2371,29 @@ func TestIsGPTImageModel(t *testing.T) {
 		t.Run(tt.model, func(t *testing.T) {
 			if got := isGPTImageModel(tt.model); got != tt.want {
 				t.Errorf("isGPTImageModel(%s) = %v, want %v", tt.model, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSupportsInputFidelity(t *testing.T) {
+	tests := []struct {
+		model string
+		want  bool
+	}{
+		{"gpt-image-2", false}, // gpt-image-2 doesn't accept input_fidelity
+		{"gpt-image-1.5", true},
+		{"gpt-image-1", true},
+		{"gpt-image-1-mini", true},
+		{"dall-e-3", false},
+		{"dall-e-2", false},
+		{"unknown", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.model, func(t *testing.T) {
+			if got := supportsInputFidelity(tt.model); got != tt.want {
+				t.Errorf("supportsInputFidelity(%s) = %v, want %v", tt.model, got, tt.want)
 			}
 		})
 	}

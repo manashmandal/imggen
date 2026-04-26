@@ -13,6 +13,119 @@ func TestNewCalculator(t *testing.T) {
 	}
 }
 
+func TestGPTImage2TokenCost(t *testing.T) {
+	tests := []struct {
+		name                             string
+		textIn, imageIn, totalIn, output int
+		want                             float64
+	}{
+		{
+			name:   "text only",
+			textIn: 10, imageIn: 0, totalIn: 10, output: 4310,
+			// 10 * 5/1M + 4310 * 30/1M = 0.00005 + 0.1293 = 0.12935
+			want: 0.12935,
+		},
+		{
+			name:   "with reference image input",
+			textIn: 20, imageIn: 1024, totalIn: 1044, output: 1500,
+			// 20 * 5/1M + 1024 * 8/1M + 1500 * 30/1M = 0.0001 + 0.008192 + 0.045 = 0.053292
+			want: 0.053292,
+		},
+		{
+			name:   "details missing falls back to total as text",
+			textIn: 0, imageIn: 0, totalIn: 100, output: 1000,
+			// 100 * 5/1M + 1000 * 30/1M = 0.0005 + 0.03 = 0.0305
+			want: 0.0305,
+		},
+		{
+			name:   "zero usage",
+			textIn: 0, imageIn: 0, totalIn: 0, output: 0,
+			want: 0,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := GPTImage2TokenCost(tt.textIn, tt.imageIn, tt.totalIn, tt.output)
+			if !floatEquals(got, tt.want) {
+				t.Errorf("GPTImage2TokenCost = %.6f, want %.6f", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCalculator_CalculateUsage_GPTImage2(t *testing.T) {
+	calc := NewCalculator()
+	usage := &models.TokenUsage{
+		InputTokens:      30,
+		OutputTokens:     2000,
+		TotalTokens:      2030,
+		TextInputTokens:  10,
+		ImageInputTokens: 20,
+	}
+	cost := calc.CalculateUsage(models.ProviderOpenAI, "gpt-image-2", usage, 1)
+	// 10 * 5/1M + 20 * 8/1M + 2000 * 30/1M = 0.00005 + 0.00016 + 0.06 = 0.06021
+	want := 0.06021
+	if !floatEquals(cost.Total, want) {
+		t.Errorf("CalculateUsage total = %.6f, want %.6f", cost.Total, want)
+	}
+	if !floatEquals(cost.PerImage, want) {
+		t.Errorf("CalculateUsage perImage = %.6f, want %.6f", cost.PerImage, want)
+	}
+}
+
+func TestCalculator_CalculateUsage_NilUsage(t *testing.T) {
+	calc := NewCalculator()
+	cost := calc.CalculateUsage(models.ProviderOpenAI, "gpt-image-2", nil, 1)
+	if cost.Total != 0 {
+		t.Errorf("nil usage should produce zero cost, got %.4f", cost.Total)
+	}
+}
+
+func TestCalculator_CalculateUsage_FallsBackForUnknownModel(t *testing.T) {
+	calc := NewCalculator()
+	usage := &models.TokenUsage{InputTokens: 100, OutputTokens: 100, TotalTokens: 200}
+	cost := calc.CalculateUsage(models.ProviderOpenAI, "gpt-image-1.5", usage, 1)
+	// Falls back to flat-rate Calculate, which returns the medium-default
+	// fallback ($0.034) since the size/quality lookup misses with empty args.
+	if cost.Total != 0.034 {
+		t.Errorf("fallback cost = %.4f, want 0.034", cost.Total)
+	}
+}
+
+func TestCalculator_Calculate_OpenAI_GPTImage2(t *testing.T) {
+	calc := NewCalculator()
+
+	tests := []struct {
+		name     string
+		size     string
+		quality  string
+		count    int
+		expected float64
+	}{
+		{"1024x1024 low", "1024x1024", "low", 1, 0.006},
+		{"1024x1024 medium", "1024x1024", "medium", 1, 0.053},
+		{"1024x1024 high", "1024x1024", "high", 1, 0.211},
+		{"1024x1024 auto", "1024x1024", "auto", 1, 0.053},
+		{"1536x1024 medium", "1536x1024", "medium", 1, 0.080},
+		{"2048x2048 high", "2048x2048", "high", 1, 0.844},
+		{"2560x1440 medium", "2560x1440", "medium", 1, 0.186},
+		{"auto auto", "auto", "auto", 1, 0.053},
+		{"3 images medium", "1024x1024", "medium", 3, 0.159},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := calc.Calculate(models.ProviderOpenAI, "gpt-image-2", tt.size, tt.quality, tt.count)
+			if !floatEquals(result.Total, tt.expected) {
+				t.Errorf("expected total %.4f, got %.4f", tt.expected, result.Total)
+			}
+			if result.Currency != CurrencyUSD {
+				t.Errorf("expected currency %s, got %s", CurrencyUSD, result.Currency)
+			}
+		})
+	}
+}
+
 func TestCalculator_Calculate_OpenAI_GPTImage1(t *testing.T) {
 	calc := NewCalculator()
 

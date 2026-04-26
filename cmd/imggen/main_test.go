@@ -166,6 +166,285 @@ func newTestApp(out *bytes.Buffer) *App {
 	}
 }
 
+// streamableMockProvider satisfies both provider.Provider and
+// provider.ImageStreamProvider so streaming dispatch logic can be exercised
+// without standing up an HTTP server.
+type streamableMockProvider struct {
+	mockProvider
+	editFunc       func(ctx context.Context, req *models.EditRequest) (*models.Response, error)
+	generateStream func(ctx context.Context, req *models.Request, h provider.StreamHandler) (*models.Response, error)
+	editStream     func(ctx context.Context, req *models.EditRequest, h provider.StreamHandler) (*models.Response, error)
+}
+
+func (m *streamableMockProvider) Edit(ctx context.Context, req *models.EditRequest) (*models.Response, error) {
+	if m.editFunc != nil {
+		return m.editFunc(ctx, req)
+	}
+	return &models.Response{Images: []models.GeneratedImage{{Index: 0, Data: []byte("edited")}}}, nil
+}
+
+func (m *streamableMockProvider) GenerateStream(ctx context.Context, req *models.Request, h provider.StreamHandler) (*models.Response, error) {
+	if m.generateStream != nil {
+		return m.generateStream(ctx, req, h)
+	}
+	return &models.Response{Images: []models.GeneratedImage{{Index: 0, Data: []byte("stream")}}}, nil
+}
+
+func (m *streamableMockProvider) EditStream(ctx context.Context, req *models.EditRequest, h provider.StreamHandler) (*models.Response, error) {
+	if m.editStream != nil {
+		return m.editStream(ctx, req, h)
+	}
+	return &models.Response{Images: []models.GeneratedImage{{Index: 0, Data: []byte("edit-stream")}}}, nil
+}
+
+func TestGenerateOrStream_NonStreamingPath(t *testing.T) {
+	resetFlags()
+	flagStream = false
+	out := &bytes.Buffer{}
+	app := &App{Out: out, Err: out, Registry: models.DefaultRegistry()}
+
+	req := models.NewRequest("test")
+	req.Model = "gpt-image-2"
+	resp, err := generateOrStream(context.Background(), &mockProvider{}, req, app, models.FormatPNG)
+	if err != nil {
+		t.Fatalf("generateOrStream: %v", err)
+	}
+	if req.Stream {
+		t.Error("req.Stream should remain false")
+	}
+	if resp == nil {
+		t.Fatal("nil response")
+	}
+}
+
+func TestGenerateOrStream_StreamingPath(t *testing.T) {
+	resetFlags()
+	flagStream = true
+	flagPartialImages = 3
+	out := &bytes.Buffer{}
+	app := &App{Out: out, Err: out, Registry: models.DefaultRegistry()}
+
+	called := false
+	prov := &streamableMockProvider{
+		generateStream: func(_ context.Context, req *models.Request, _ provider.StreamHandler) (*models.Response, error) {
+			called = true
+			if !req.Stream {
+				t.Errorf("req.Stream not set on streaming call")
+			}
+			if req.PartialImages != 3 {
+				t.Errorf("req.PartialImages = %d, want 3", req.PartialImages)
+			}
+			return &models.Response{Images: []models.GeneratedImage{{Index: 0}}}, nil
+		},
+	}
+
+	req := models.NewRequest("test")
+	req.Model = "gpt-image-2"
+	if _, err := generateOrStream(context.Background(), prov, req, app, models.FormatPNG); err != nil {
+		t.Fatalf("generateOrStream: %v", err)
+	}
+	if !called {
+		t.Error("GenerateStream not called")
+	}
+}
+
+func TestGenerateOrStream_StreamRequiresStreamableProvider(t *testing.T) {
+	resetFlags()
+	flagStream = true
+	app := &App{Out: &bytes.Buffer{}, Err: &bytes.Buffer{}, Registry: models.DefaultRegistry()}
+	req := models.NewRequest("test")
+	req.Model = "gpt-image-2"
+	_, err := generateOrStream(context.Background(), &mockProvider{}, req, app, models.FormatPNG)
+	if err == nil {
+		t.Error("expected error when provider doesn't implement ImageStreamProvider")
+	}
+}
+
+func TestEditOrStream_NonStreamingPath(t *testing.T) {
+	resetFlags()
+	flagStream = false
+	app := &App{Out: &bytes.Buffer{}, Err: &bytes.Buffer{}, Registry: models.DefaultRegistry()}
+
+	req := models.NewEditRequest([]byte("img"), "edit")
+	req.Model = "gpt-image-2"
+
+	editCalled := false
+	prov := &streamableMockProvider{
+		editFunc: func(_ context.Context, _ *models.EditRequest) (*models.Response, error) {
+			editCalled = true
+			return &models.Response{Images: []models.GeneratedImage{{Index: 0}}}, nil
+		},
+	}
+	if _, err := editOrStream(context.Background(), prov, req, app, models.FormatPNG, "Editing"); err != nil {
+		t.Fatalf("editOrStream: %v", err)
+	}
+	if !editCalled {
+		t.Error("Edit not called on non-streaming path")
+	}
+	if req.Stream {
+		t.Error("req.Stream should remain false")
+	}
+}
+
+func TestEditOrStream_StreamingPath(t *testing.T) {
+	resetFlags()
+	flagStream = true
+	flagPartialImages = 1
+	app := &App{Out: &bytes.Buffer{}, Err: &bytes.Buffer{}, Registry: models.DefaultRegistry()}
+
+	streamCalled := false
+	prov := &streamableMockProvider{
+		editStream: func(_ context.Context, req *models.EditRequest, _ provider.StreamHandler) (*models.Response, error) {
+			streamCalled = true
+			if !req.Stream {
+				t.Errorf("req.Stream not set")
+			}
+			if req.PartialImages != 1 {
+				t.Errorf("req.PartialImages = %d, want 1", req.PartialImages)
+			}
+			return &models.Response{Images: []models.GeneratedImage{{Index: 0}}}, nil
+		},
+	}
+
+	req := models.NewEditRequest([]byte("img"), "edit")
+	req.Model = "gpt-image-2"
+	if _, err := editOrStream(context.Background(), prov, req, app, models.FormatPNG, "Editing"); err != nil {
+		t.Fatalf("editOrStream: %v", err)
+	}
+	if !streamCalled {
+		t.Error("EditStream not called on streaming path")
+	}
+}
+
+func TestEditOrStream_StreamRequiresStreamableProvider(t *testing.T) {
+	resetFlags()
+	flagStream = true
+	app := &App{Out: &bytes.Buffer{}, Err: &bytes.Buffer{}, Registry: models.DefaultRegistry()}
+	req := models.NewEditRequest([]byte("img"), "edit")
+	req.Model = "gpt-image-2"
+	_, err := editOrStream(context.Background(), &mockProvider{}, req, app, models.FormatPNG, "Editing")
+	if err == nil {
+		t.Error("expected error when provider doesn't implement ImageStreamProvider")
+	}
+}
+
+func TestWritePartial_NoOutputUsesCwd(t *testing.T) {
+	tmp := t.TempDir()
+	t.Chdir(tmp)
+	if err := writePartial("", "image", 0, models.FormatPNG, []byte("data")); err != nil {
+		t.Fatalf("writePartial: %v", err)
+	}
+	want := filepath.Join(tmp, "image-partial-0.png")
+	got, err := os.ReadFile(want)
+	if err != nil {
+		t.Fatalf("expected %s: %v", want, err)
+	}
+	if string(got) != "data" {
+		t.Errorf("file contents = %q, want %q", got, "data")
+	}
+}
+
+func TestWritePartial_ExistingDirectory(t *testing.T) {
+	tmp := t.TempDir()
+	if err := writePartial(tmp, "image", 1, models.FormatPNG, []byte("data")); err != nil {
+		t.Fatalf("writePartial: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(tmp, "image-partial-1.png")); err != nil {
+		t.Errorf("expected image-partial-1.png in %s: %v", tmp, err)
+	}
+}
+
+func TestWritePartial_ExistingFilePath(t *testing.T) {
+	tmp := t.TempDir()
+	finalPath := filepath.Join(tmp, "sunset.png")
+	if err := os.WriteFile(finalPath, []byte("placeholder"), 0o644); err != nil {
+		t.Fatalf("seed file: %v", err)
+	}
+	if err := writePartial(finalPath, "image", 0, models.FormatJPEG, []byte("data")); err != nil {
+		t.Fatalf("writePartial: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(tmp, "sunset-partial-0.jpeg")); err != nil {
+		t.Errorf("expected sunset-partial-0.jpeg: %v", err)
+	}
+}
+
+func TestWritePartial_NonExistentPath(t *testing.T) {
+	tmp := t.TempDir()
+	target := filepath.Join(tmp, "future.png")
+	if err := writePartial(target, "image", 2, models.FormatWebP, []byte("data")); err != nil {
+		t.Fatalf("writePartial: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(tmp, "future-partial-2.webp")); err != nil {
+		t.Errorf("expected future-partial-2.webp: %v", err)
+	}
+}
+
+func TestStreamProgressHandler_PartialSavesFile(t *testing.T) {
+	resetFlags()
+	flagSavePartials = true
+	tmp := t.TempDir()
+	out := &bytes.Buffer{}
+	errBuf := &bytes.Buffer{}
+	app := &App{Out: out, Err: errBuf, Registry: models.DefaultRegistry()}
+
+	handler := streamProgressHandler(app, filepath.Join(tmp, "out.png"), models.FormatPNG, "image")
+	handler(&models.StreamEvent{Type: models.StreamEventPartial, Index: 0, Data: []byte("partial-data")})
+
+	if !strings.Contains(errBuf.String(), "partial 0 received") {
+		t.Errorf("stderr = %q, want substring 'partial 0 received'", errBuf.String())
+	}
+	if _, err := os.Stat(filepath.Join(tmp, "out-partial-0.png")); err != nil {
+		t.Errorf("expected partial saved with --save-partials: %v", err)
+	}
+}
+
+func TestStreamProgressHandler_NoSaveWhenFlagOff(t *testing.T) {
+	resetFlags()
+	flagSavePartials = false
+	tmp := t.TempDir()
+	app := &App{Out: &bytes.Buffer{}, Err: &bytes.Buffer{}, Registry: models.DefaultRegistry()}
+
+	handler := streamProgressHandler(app, filepath.Join(tmp, "out.png"), models.FormatPNG, "image")
+	handler(&models.StreamEvent{Type: models.StreamEventPartial, Index: 0, Data: []byte("data")})
+
+	entries, _ := os.ReadDir(tmp)
+	if len(entries) != 0 {
+		t.Errorf("got %d files in tmp without --save-partials, want 0", len(entries))
+	}
+}
+
+func TestStreamProgressHandler_CompletedWithUsage(t *testing.T) {
+	resetFlags()
+	errBuf := &bytes.Buffer{}
+	app := &App{Out: &bytes.Buffer{}, Err: errBuf, Registry: models.DefaultRegistry()}
+
+	handler := streamProgressHandler(app, "", models.FormatPNG, "image")
+	handler(&models.StreamEvent{
+		Type:  models.StreamEventCompleted,
+		Usage: &models.TokenUsage{InputTokens: 10, OutputTokens: 273, TotalTokens: 283},
+	})
+
+	got := errBuf.String()
+	for _, want := range []string{"completed", "input=10", "output=273", "total=283"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("stderr = %q, want substring %q", got, want)
+		}
+	}
+}
+
+func TestStreamProgressHandler_CompletedWithoutUsage(t *testing.T) {
+	resetFlags()
+	errBuf := &bytes.Buffer{}
+	app := &App{Out: &bytes.Buffer{}, Err: errBuf, Registry: models.DefaultRegistry()}
+
+	handler := streamProgressHandler(app, "", models.FormatPNG, "image")
+	handler(&models.StreamEvent{Type: models.StreamEventCompleted})
+
+	if !strings.Contains(errBuf.String(), "completed") {
+		t.Errorf("stderr = %q, want 'completed'", errBuf.String())
+	}
+}
+
 func TestDefaultApp(t *testing.T) {
 	app := DefaultApp()
 
@@ -1750,7 +2029,7 @@ func TestRootCmd_FlagDefaults(t *testing.T) {
 		flag   string
 		defVal string
 	}{
-		{"model", "gpt-image-1.5"},
+		{"model", "gpt-image-2"},
 		{"size", ""},
 		{"quality", ""},
 		{"count", "1"},
@@ -3231,10 +3510,10 @@ func TestEditCmdArgValidation(t *testing.T) {
 	resetFlags()
 
 	tests := []struct {
-		name        string
-		bgRemove    bool
-		args        []string
-		wantErr     bool
+		name     string
+		bgRemove bool
+		args     []string
+		wantErr  bool
 	}{
 		{
 			name:     "two args without bg-remove succeeds",

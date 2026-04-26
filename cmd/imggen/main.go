@@ -123,6 +123,12 @@ var (
 	flagUpdateCheck bool
 )
 
+var (
+	flagStream        bool
+	flagPartialImages int
+	flagSavePartials  bool
+)
+
 type App struct {
 	Out          io.Writer
 	Err          io.Writer
@@ -210,14 +216,18 @@ func newRootCmd(app *App) *cobra.Command {
 		Short: "Generate images and videos using AI generation APIs",
 		Long: `imggen is a CLI tool for generating, editing, and analyzing images using AI APIs.
 
+Recommended model: gpt-image-2 (default) — OpenAI's latest and highest-quality
+image generation model. Always prefer gpt-image-2 unless you have a specific
+reason not to (e.g., need transparent background — use gpt-image-1.5 for that).
+
 Supported providers:
-  - OpenAI (gpt-image-1.5, gpt-image-1, gpt-image-1-mini, dall-e-3, dall-e-2)
+  - OpenAI (gpt-image-2 [default, recommended], gpt-image-1.5, gpt-image-1, gpt-image-1-mini, dall-e-3, dall-e-2)
   - OpenAI Video (sora-2, sora-2-pro) [DEPRECATED — shuts down Sep 24, 2026]
 
 Image Generation:
   imggen "a sunset over mountains"
   imggen -m gpt-image-1-mini -n 3 "quick concept art"
-  imggen -m gpt-image-1 -n 3 --transparent "logo design"
+  imggen -m gpt-image-1.5 -n 3 --transparent "logo design with transparent bg"
 
 Image Editing:
   imggen edit photo.png "make the sky purple"
@@ -251,7 +261,7 @@ OCR:
 		},
 	}
 
-	cmd.Flags().StringVarP(&flagModel, "model", "m", "gpt-image-1.5", "model to use (gpt-image-1.5, gpt-image-1, gpt-image-1-mini, dall-e-3, dall-e-2)")
+	cmd.Flags().StringVarP(&flagModel, "model", "m", "gpt-image-2", "model to use — prefer gpt-image-2 (default, latest, highest quality). Other options: gpt-image-1.5, gpt-image-1, gpt-image-1-mini, dall-e-3, dall-e-2")
 	cmd.Flags().StringVarP(&flagSize, "size", "s", "", "image size (e.g., 1024x1024)")
 	cmd.Flags().StringVarP(&flagQuality, "quality", "q", "", "quality level")
 	cmd.Flags().IntVarP(&flagCount, "count", "n", 1, "number of images to generate")
@@ -268,6 +278,9 @@ OCR:
 	cmd.Flags().StringVar(&flagModeration, "moderation", "", "moderation level: auto or low (GPT image models only)")
 	cmd.Flags().StringVar(&flagAPIKey, "api-key", "", "API key (defaults to OPENAI_API_KEY)")
 	cmd.Flags().BoolVarP(&flagShow, "show", "S", false, "display image in terminal (Kitty graphics protocol)")
+	cmd.Flags().BoolVar(&flagStream, "stream", false, "stream partial frames during generation (gpt-image-2 only)")
+	cmd.Flags().IntVar(&flagPartialImages, "partial-images", 2, "number of partial frames to stream (0-3); each adds 100 output tokens")
+	cmd.Flags().BoolVar(&flagSavePartials, "save-partials", false, "write each streamed partial frame to disk alongside the final image")
 	cmd.Flags().BoolVarP(&flagInteractive, "interactive", "i", false, "start interactive editing mode")
 	cmd.Flags().BoolVarP(&flagVerbose, "verbose", "v", false, "log HTTP requests and responses (API keys redacted)")
 	cmd.Flags().StringArrayVarP(&flagPrompts, "prompt", "P", nil, "prompt for image generation (can be specified multiple times)")
@@ -461,9 +474,7 @@ func runGenerate(_ *cobra.Command, args []string, app *App) error {
 		return fmt.Errorf("failed to create provider: %w", err)
 	}
 
-	fmt.Fprintf(app.Out, "Generating %d image(s) with %s...\n", req.Count, req.Model)
-
-	resp, err := prov.Generate(ctx, req)
+	resp, err := generateOrStream(ctx, prov, req, app, format)
 	if err != nil {
 		return fmt.Errorf("generation failed: %w", err)
 	}
@@ -502,6 +513,106 @@ func runGenerate(_ *cobra.Command, args []string, app *App) error {
 
 	fmt.Fprintln(app.Out, "Done!")
 	return nil
+}
+
+// generateOrStream dispatches to either the streaming or non-streaming
+// provider call based on flagStream. When streaming, it prints per-partial
+// progress to app.Err and (if --save-partials) writes each partial to disk
+// next to the final image.
+func generateOrStream(ctx context.Context, prov provider.Provider, req *models.Request, app *App, format models.OutputFormat) (*models.Response, error) {
+	if !flagStream {
+		fmt.Fprintf(app.Out, "Generating %d image(s) with %s...\n", req.Count, req.Model)
+		return prov.Generate(ctx, req)
+	}
+
+	streamProv, ok := prov.(provider.ImageStreamProvider)
+	if !ok {
+		return nil, fmt.Errorf("provider %s does not support streaming", prov.Name())
+	}
+	req.Stream = true
+	req.PartialImages = flagPartialImages
+	fmt.Fprintf(app.Out, "Generating with %s (streaming, %d partial frame(s))...\n", req.Model, flagPartialImages)
+
+	handler := streamProgressHandler(app, flagOutput, format, "image")
+	return streamProv.GenerateStream(ctx, req, handler)
+}
+
+// editOrStream dispatches to either the streaming or non-streaming edit path
+// based on flagStream.
+func editOrStream(ctx context.Context, prov provider.Provider, req *models.EditRequest, app *App, format models.OutputFormat, action string) (*models.Response, error) {
+	if !flagStream {
+		fmt.Fprintf(app.Out, "%s image with %s...\n", action, req.Model)
+		return prov.Edit(ctx, req)
+	}
+
+	streamProv, ok := prov.(provider.ImageStreamProvider)
+	if !ok {
+		return nil, fmt.Errorf("provider %s does not support streaming", prov.Name())
+	}
+	req.Stream = true
+	req.PartialImages = flagPartialImages
+	fmt.Fprintf(app.Out, "%s image with %s (streaming, %d partial frame(s))...\n", action, req.Model, flagPartialImages)
+
+	handler := streamProgressHandler(app, flagEditOutput, format, "edit")
+	return streamProv.EditStream(ctx, req, handler)
+}
+
+// streamProgressHandler builds a StreamHandler that logs progress to stderr
+// and, when --save-partials is set, writes each partial PNG/JPEG/WebP next to
+// the final output. The basename argument disambiguates partials in commands
+// that produce multiple outputs (e.g. edit vs generate).
+func streamProgressHandler(app *App, outputPath string, format models.OutputFormat, basename string) provider.StreamHandler {
+	return func(ev *models.StreamEvent) {
+		switch ev.Type {
+		case models.StreamEventPartial:
+			fmt.Fprintf(app.Err, "  partial %d received (%d bytes)\n", ev.Index, len(ev.Data))
+			if flagSavePartials {
+				if err := writePartial(outputPath, basename, ev.Index, format, ev.Data); err != nil {
+					fmt.Fprintf(app.Err, "  warning: failed to save partial %d: %v\n", ev.Index, err)
+				}
+			}
+		case models.StreamEventCompleted:
+			if ev.Usage != nil {
+				fmt.Fprintf(app.Err, "  completed (input=%d, output=%d, total=%d tokens)\n",
+					ev.Usage.InputTokens, ev.Usage.OutputTokens, ev.Usage.TotalTokens)
+			} else {
+				fmt.Fprintln(app.Err, "  completed")
+			}
+		}
+	}
+}
+
+// writePartial writes a streamed partial frame to disk. Path layout follows
+// the user's --output flag: when output is a directory or empty, partials go
+// into the working directory with name "<basename>-partial-<index>.<ext>"; if
+// output is a file path, partials sit alongside it as
+// "<base>-partial-<index>.<ext>".
+func writePartial(outputPath, basename string, index int, format models.OutputFormat, data []byte) error {
+	dir := "."
+	stem := basename
+	if outputPath != "" {
+		info, err := os.Stat(outputPath)
+		switch {
+		case err == nil && info.IsDir():
+			dir = outputPath
+		case err == nil:
+			dir = filepath.Dir(outputPath)
+			ext := filepath.Ext(outputPath)
+			stem = strings.TrimSuffix(filepath.Base(outputPath), ext)
+		default:
+			// Treat non-existent path as a file path; place partials alongside.
+			dir = filepath.Dir(outputPath)
+			if dir == "" {
+				dir = "."
+			}
+			ext := filepath.Ext(outputPath)
+			if ext != "" {
+				stem = strings.TrimSuffix(filepath.Base(outputPath), ext)
+			}
+		}
+	}
+	path := filepath.Join(dir, fmt.Sprintf("%s-partial-%d.%s", stem, index, format.String()))
+	return os.WriteFile(path, data, 0o644)
 }
 
 func buildReferences(paths, prompts []string, weights []float64) ([]models.ReferenceImage, error) {
@@ -839,7 +950,7 @@ Examples:
 	}
 
 	cmd.Flags().StringVarP(&flagBatchOutput, "output", "o", "", "output directory for generated images")
-	cmd.Flags().StringVarP(&flagBatchModel, "model", "m", "gpt-image-1.5", "default model for prompts without model specified")
+	cmd.Flags().StringVarP(&flagBatchModel, "model", "m", "gpt-image-2", "default model for prompts without model specified — prefer gpt-image-2 (latest, highest quality)")
 	cmd.Flags().StringVarP(&flagBatchSize, "size", "s", "", "default image size")
 	cmd.Flags().StringVarP(&flagBatchQuality, "quality", "q", "", "default quality level")
 	cmd.Flags().StringVarP(&flagBatchFormat, "format", "f", "png", "output format (png, jpeg, webp)")
@@ -966,7 +1077,7 @@ Examples:
 	}
 
 	cmd.Flags().StringVarP(&flagWorkflowOutput, "output", "o", "", "output directory for generated images")
-	cmd.Flags().StringVarP(&flagWorkflowModel, "model", "m", "gpt-image-1.5", "default model for workflow steps without model specified")
+	cmd.Flags().StringVarP(&flagWorkflowModel, "model", "m", "gpt-image-2", "default model for workflow steps without model specified — prefer gpt-image-2 (latest, highest quality)")
 	cmd.Flags().StringVarP(&flagWorkflowSize, "size", "s", "", "default image size")
 	cmd.Flags().StringVarP(&flagWorkflowQuality, "quality", "q", "", "default quality level")
 	cmd.Flags().StringVarP(&flagWorkflowFormat, "format", "f", "png", "default output format (png, jpeg, webp)")
@@ -1638,6 +1749,10 @@ func newEditCmd(app *App) *cobra.Command {
 		Short: "Edit an existing image with a text instruction",
 		Long: `Edit an existing image using OpenAI's image editing API.
 
+Recommended model: gpt-image-2 (default) — OpenAI's latest and highest-quality
+image model. Use it for all edits except --bg-remove (transparency requires
+gpt-image-1.5; this command auto-falls-back when --bg-remove is used).
+
 Supports inpainting with masks and background removal.
 
 Examples:
@@ -1656,7 +1771,7 @@ Examples:
 		},
 	}
 
-	cmd.Flags().StringVarP(&flagEditModel, "model", "m", "gpt-image-1.5", "model to use (gpt-image-1.5, gpt-image-1, gpt-image-1-mini, dall-e-2)")
+	cmd.Flags().StringVarP(&flagEditModel, "model", "m", "gpt-image-2", "model to use — prefer gpt-image-2 (default, latest, highest quality). Other options: gpt-image-1.5, gpt-image-1, gpt-image-1-mini, dall-e-2. Note: --bg-remove auto-uses gpt-image-1.5 (gpt-image-2 has no transparent output)")
 	cmd.Flags().StringVarP(&flagEditSize, "size", "s", "", "output size (e.g., 1024x1024)")
 	cmd.Flags().StringVarP(&flagEditQuality, "quality", "q", "", "quality level (auto, low, medium, high)")
 	cmd.Flags().IntVarP(&flagEditCount, "count", "n", 1, "number of edit variations (default 1)")
@@ -1667,6 +1782,9 @@ Examples:
 	cmd.Flags().BoolVarP(&flagEditShow, "show", "S", false, "display result in terminal")
 	cmd.Flags().IntVar(&flagEditCompression, "compression", -1, "output compression 0-100 (GPT image models, jpeg/webp only)")
 	cmd.Flags().StringVar(&flagEditModeration, "moderation", "", "moderation level: auto or low (GPT image models only)")
+	cmd.Flags().BoolVar(&flagStream, "stream", false, "stream partial frames during edit (gpt-image-2 only; ignored with --bg-remove)")
+	cmd.Flags().IntVar(&flagPartialImages, "partial-images", 2, "number of partial frames to stream (0-3); each adds 100 output tokens")
+	cmd.Flags().BoolVar(&flagSavePartials, "save-partials", false, "write each streamed partial frame to disk alongside the final image")
 	cmd.Flags().StringVar(&flagAPIKey, "api-key", "", "API key (defaults to OPENAI_API_KEY)")
 	cmd.Flags().BoolVarP(&flagVerbose, "verbose", "v", false, "log HTTP requests and responses")
 
@@ -1686,6 +1804,15 @@ func runEdit(_ *cobra.Command, args []string, app *App) error {
 	imageData, err := os.ReadFile(imagePath)
 	if err != nil {
 		return fmt.Errorf("failed to read image %q: %w", imagePath, err)
+	}
+
+	if flagEditBgRemove && flagEditModel == "gpt-image-2" {
+		fmt.Fprintln(app.Err, "Note: --bg-remove requires transparency support; switching from gpt-image-2 to gpt-image-1.5.")
+		flagEditModel = "gpt-image-1.5"
+		if flagStream {
+			fmt.Fprintln(app.Err, "Note: --stream is not supported on gpt-image-1.5; disabling for this run.")
+			flagStream = false
+		}
 	}
 
 	format := models.OutputFormat(flagEditFormat)
@@ -1752,9 +1879,8 @@ func runEdit(_ *cobra.Command, args []string, app *App) error {
 	} else if flagEditMask != "" {
 		action = "Inpainting"
 	}
-	fmt.Fprintf(app.Out, "%s image with %s...\n", action, req.Model)
 
-	resp, err := prov.Edit(ctx, req)
+	resp, err := editOrStream(ctx, prov, req, app, format, action)
 	if err != nil {
 		return fmt.Errorf("edit failed: %w", err)
 	}
