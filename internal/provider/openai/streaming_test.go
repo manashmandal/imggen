@@ -219,6 +219,116 @@ func TestGenerateStream_RejectsBadPartialImagesValue(t *testing.T) {
 	}
 }
 
+func TestEditStream_HappyPath(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/images/edits" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		ct := r.Header.Get("Content-Type")
+		if !strings.HasPrefix(ct, "multipart/form-data") {
+			t.Errorf("Content-Type = %q, want multipart/form-data", ct)
+		}
+		if r.Header.Get("Accept") != "text/event-stream" {
+			t.Errorf("Accept = %q, want text/event-stream", r.Header.Get("Accept"))
+		}
+
+		// Parse multipart to confirm stream=true and partial_images=N are set.
+		if err := r.ParseMultipartForm(1 << 20); err != nil {
+			t.Errorf("parse multipart: %v", err)
+		}
+		if got := r.FormValue("stream"); got != "true" {
+			t.Errorf("stream = %q, want true", got)
+		}
+		if got := r.FormValue("partial_images"); got != "1" {
+			t.Errorf("partial_images = %q, want 1", got)
+		}
+		if got := r.FormValue("model"); got != "gpt-image-2" {
+			t.Errorf("model = %q, want gpt-image-2", got)
+		}
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		sse := strings.Join([]string{
+			`data: {"type":"image_edit.partial_image","b64_json":"AAEC","partial_image_index":0}`,
+			``,
+			`data: {"type":"image_edit.completed","b64_json":"AwQF","usage":{"input_tokens":5,"output_tokens":1000,"total_tokens":1005}}`,
+			``,
+		}, "\n")
+		_, _ = w.Write([]byte(sse))
+	}))
+	defer server.Close()
+
+	p, err := New(&provider.Config{APIKey: "test", BaseURL: server.URL}, models.DefaultRegistry())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	req := models.NewEditRequest([]byte("fake-image-data"), "test edit")
+	req.Model = "gpt-image-2"
+	req.PartialImages = 1
+
+	var partials []int
+	handler := provider.StreamHandler(func(ev *models.StreamEvent) {
+		if ev.Type == models.StreamEventPartial {
+			partials = append(partials, ev.Index)
+		}
+	})
+
+	resp, err := p.EditStream(context.Background(), req, handler)
+	if err != nil {
+		t.Fatalf("EditStream: %v", err)
+	}
+	if len(partials) != 1 || partials[0] != 0 {
+		t.Errorf("partials = %v, want [0]", partials)
+	}
+	if resp.Usage == nil || resp.Usage.TotalTokens != 1005 {
+		t.Errorf("usage = %+v, want total=1005", resp.Usage)
+	}
+	// Token-based: 5 * 5/1M + 1000 * 30/1M = 0.000025 + 0.03 = 0.030025
+	if resp.Cost == nil {
+		t.Fatal("Cost should be populated from token usage")
+	}
+	want := 0.030025
+	if diff := resp.Cost.Total - want; diff > 1e-9 || diff < -1e-9 {
+		t.Errorf("token-based edit cost = %.7f, want %.7f", resp.Cost.Total, want)
+	}
+}
+
+func TestEditStream_RejectsBadPartialImagesValue(t *testing.T) {
+	p, _ := New(&provider.Config{APIKey: "test"}, models.DefaultRegistry())
+	req := models.NewEditRequest([]byte("fake"), "test")
+	req.Model = "gpt-image-2"
+	req.PartialImages = 5
+	if _, err := p.EditStream(context.Background(), req, nil); err == nil {
+		t.Error("partial_images=5 should error")
+	}
+}
+
+func TestStreamCost_PrefersTokenUsage(t *testing.T) {
+	p, _ := New(&provider.Config{APIKey: "test"}, models.DefaultRegistry())
+	resp := &models.Response{
+		Images: []models.GeneratedImage{{Index: 0}},
+		Usage:  &models.TokenUsage{InputTokens: 10, OutputTokens: 1000, TotalTokens: 1010},
+	}
+	cost := p.streamCost("gpt-image-2", "1024x1024", "low", resp)
+	// 10 * 5/1M + 1000 * 30/1M = 0.00005 + 0.03 = 0.03005
+	want := 0.03005
+	if diff := cost.Total - want; diff > 1e-9 || diff < -1e-9 {
+		t.Errorf("token-based cost = %.6f, want %.6f", cost.Total, want)
+	}
+}
+
+func TestStreamCost_FallsBackToFlatRate(t *testing.T) {
+	p, _ := New(&provider.Config{APIKey: "test"}, models.DefaultRegistry())
+	resp := &models.Response{
+		Images: []models.GeneratedImage{{Index: 0}},
+		Usage:  nil,
+	}
+	cost := p.streamCost("gpt-image-2", "1024x1024", "low", resp)
+	if cost.Total != 0.006 {
+		t.Errorf("flat-rate cost = %.4f, want 0.006", cost.Total)
+	}
+}
+
 func TestEditStream_RejectsNonGPT2(t *testing.T) {
 	p, _ := New(&provider.Config{APIKey: "test"}, models.DefaultRegistry())
 	req := models.NewEditRequest([]byte("fake"), "test")
